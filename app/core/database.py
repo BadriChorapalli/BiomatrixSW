@@ -157,7 +157,7 @@ def save_staff(staff_list, school_id):
         roles = ", ".join(s.get("roles", []))
         conn.execute(
             "INSERT OR REPLACE INTO staff (si_user_id, name, email, roles, school_id, synced_at) VALUES (?,?,?,?,?,datetime('now'))",
-            (s.get("id"), s.get("name", ""), s.get("email", ""), roles, school_id)
+            (s.get("user_id") or s.get("id"), s.get("name", ""), s.get("email", ""), roles, school_id)
         )
     conn.commit()
     conn.close()
