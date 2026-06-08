@@ -1,0 +1,3 @@
+([('BiomatrixSync',
+   '/Users/badrich/BellWeather/BiomatrixSW/dist/BiomatrixSync',
+   'EXECUTABLE')],)

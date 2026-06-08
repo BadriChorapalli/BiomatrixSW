@@ -1,0 +1,6 @@
+customtkinter==5.2.2
+pyzk==0.9
+requests==2.31.0
+schedule==1.2.1
+Pillow==10.3.0
+pyinstaller==6.6.0
