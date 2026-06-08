@@ -10,28 +10,21 @@ permissions:
   contents: read
 
 jobs:
-  build:
+  build-windows:
     runs-on: windows-latest
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Python 3.12
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: Install dependencies
-        shell: cmd
-        run: pip install -r requirements.txt
+      - name: Install and build
+        run: |
+          pip install -r requirements.txt
+          pyinstaller build.spec --clean --noconfirm
 
-      - name: Build EXE with PyInstaller
-        shell: cmd
-        run: pyinstaller build.spec --clean --noconfirm
-
-      - name: Upload EXE artifact
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: BiomatrixSync-Windows
           path: dist\BiomatrixSync.exe
