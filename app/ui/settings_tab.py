@@ -127,6 +127,19 @@ class SettingsTab(ctk.CTkFrame):
         ctk.CTkButton(scroll, text="Change Password", command=self._change_password,
                       height=36, fg_color="#37474f", hover_color="#263238").pack(anchor="w", padx=16, pady=(4, 0))
 
+        # Clear Data
+        self._section(scroll, "Clear Local Data")
+
+        ctk.CTkLabel(scroll,
+                     text="Permanently deletes local attendance, staff, sync logs and code mappings. Settings and device configs are kept.",
+                     text_color="#888", font=ctk.CTkFont(size=11)).pack(anchor="w", padx=16, pady=(0, 8))
+
+        self._clear_status = ctk.CTkLabel(scroll, text="", font=ctk.CTkFont(size=12))
+        self._clear_status.pack(anchor="w", padx=16)
+
+        ctk.CTkButton(scroll, text="Clear Data", command=self._clear_data,
+                      height=36, fg_color="#b71c1c", hover_color="#7f0000").pack(anchor="w", padx=16, pady=(4, 0))
+
         # Save button
         self.status_label = ctk.CTkLabel(scroll, text="", text_color="#a5d6a7")
         self.status_label.pack(anchor="w", padx=16, pady=(16, 4))
@@ -187,6 +200,23 @@ class SettingsTab(ctk.CTkFrame):
             slots.pop(idx)
             db.save_poll_slots(slots)
         self._render_slots()
+
+    def _clear_data(self):
+        from tkinter import messagebox
+        if not messagebox.askyesno(
+            "Clear Local Data",
+            "This will delete all local attendance records, staff, sync logs and code mappings.\n\nAre you sure?"
+        ):
+            return
+        conn = db.get_conn()
+        conn.execute("DELETE FROM attendance")
+        conn.execute("DELETE FROM staff")
+        conn.execute("DELETE FROM sync_logs")
+        conn.execute("DELETE FROM code_mappings")
+        conn.commit()
+        conn.close()
+        self._clear_status.configure(text="Local data cleared successfully.", text_color="#a5d6a7")
+        self.after(4000, lambda: self._clear_status.configure(text=""))
 
     def _section(self, parent, title):
         ctk.CTkLabel(parent, text=title, font=ctk.CTkFont(size=13, weight="bold")).pack(
