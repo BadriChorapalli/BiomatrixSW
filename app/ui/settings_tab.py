@@ -131,13 +131,13 @@ class SettingsTab(ctk.CTkFrame):
         self._section(scroll, "Clear Local Data")
 
         ctk.CTkLabel(scroll,
-                     text="Permanently deletes local attendance, staff, sync logs and code mappings. Settings and device configs are kept.",
+                     text="Clears staff list and code mappings synced from School Insights. Local attendance and device data are kept. You can re-sync from cloud anytime.",
                      text_color="#888", font=ctk.CTkFont(size=11)).pack(anchor="w", padx=16, pady=(0, 8))
 
         self._clear_status = ctk.CTkLabel(scroll, text="", font=ctk.CTkFont(size=12))
         self._clear_status.pack(anchor="w", padx=16)
 
-        ctk.CTkButton(scroll, text="Clear Data", command=self._clear_data,
+        ctk.CTkButton(scroll, text="Clear Cloud Sync Data", command=self._clear_data,
                       height=36, fg_color="#b71c1c", hover_color="#7f0000").pack(anchor="w", padx=16, pady=(4, 0))
 
         # Save button
@@ -204,18 +204,16 @@ class SettingsTab(ctk.CTkFrame):
     def _clear_data(self):
         from tkinter import messagebox
         if not messagebox.askyesno(
-            "Clear Local Data",
-            "This will delete all local attendance records, staff, sync logs and code mappings.\n\nAre you sure?"
+            "Clear Cloud Sync Data",
+            "This will clear the staff list and code mappings synced from School Insights.\n\nLocal attendance records are NOT affected. You can re-sync from cloud anytime.\n\nContinue?"
         ):
             return
         conn = db.get_conn()
-        conn.execute("DELETE FROM attendance")
         conn.execute("DELETE FROM staff")
-        conn.execute("DELETE FROM sync_logs")
         conn.execute("DELETE FROM code_mappings")
         conn.commit()
         conn.close()
-        self._clear_status.configure(text="Local data cleared successfully.", text_color="#a5d6a7")
+        self._clear_status.configure(text="Cloud sync data cleared. Re-sync from Staff tab.", text_color="#a5d6a7")
         self.after(4000, lambda: self._clear_status.configure(text=""))
 
     def _section(self, parent, title):
