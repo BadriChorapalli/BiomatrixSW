@@ -315,6 +315,47 @@ def sync_device_users(users, school_id=None):
         return False, str(e), 0
 
 
+# ── Real-time Punch ──────────────────────────────────────────────────────────
+
+def punch_attendance(si_user_id, punch_type, device_timestamp):
+    """POST /staff-attendance/mark/ — mark real-time check-in or check-out.
+
+    punch_type      : "CHECK_IN" or "CHECK_OUT"
+    device_timestamp: ISO 8601 string e.g. "2026-06-08T08:30:00+05:30"
+    Returns (ok: bool, message: str)
+    """
+    if not is_device_approved():
+        return False, "Device not approved"
+    school_id = db.get_setting("si_school_id", "")
+    if not school_id:
+        return False, "School ID not set"
+    date_str = device_timestamp[:10]
+    payload = {
+        "user_id": int(si_user_id),
+        "school_id": int(school_id),
+        "date": date_str,
+        "status": "present",
+        "source": "biometric_upload",
+    }
+    if punch_type == "CHECK_IN":
+        payload["check_in"] = device_timestamp
+    else:
+        payload["check_out"] = device_timestamp
+    try:
+        r = requests.post(
+            f"{BASE_URL}/staff-attendance/mark/",
+            json=payload,
+            headers=_headers(),
+            timeout=10,
+        )
+        if r.status_code in (200, 201):
+            return True, "OK"
+        data = r.json()
+        return False, data.get("detail", r.text[:200])
+    except Exception as e:
+        return False, str(e)
+
+
 # ── Attendance Upload ────────────────────────────────────────────────────────
 
 def _parse_time(t):

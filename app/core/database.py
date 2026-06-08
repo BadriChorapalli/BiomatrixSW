@@ -208,6 +208,20 @@ def get_attendance_dates():
     return [r[0] for r in rows]
 
 
+def get_poll_slots():
+    import json
+    raw = get_setting("poll_slots", "[]")
+    try:
+        return json.loads(raw)
+    except Exception:
+        return []
+
+
+def save_poll_slots(slots):
+    import json
+    set_setting("poll_slots", json.dumps(slots))
+
+
 def save_code_mappings(mappings):
     """Upsert bio_code → SI user mappings. mappings = [{bio_code, si_user_id, si_name}]."""
     conn = get_conn()

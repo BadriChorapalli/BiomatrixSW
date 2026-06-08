@@ -41,7 +41,11 @@ def test_connection(ip, port, password):
         return False, str(e)
 
 
-def pull_attendance(ip, port, password, target_date=None):
+def pull_attendance(ip, port, password, target_date=None, since=None):
+    """Pull attendance records from device.
+
+    since: datetime — if given, only return records with timestamp > since.
+    """
     if target_date is None:
         target_date = date.today()
 
@@ -51,7 +55,11 @@ def pull_attendance(ip, port, password, target_date=None):
         conn = zk.connect()
         users = {u.user_id: u.name for u in conn.get_users()}
         all_records = conn.get_attendance()
-        records = [a for a in all_records if a.timestamp.date() == target_date]
+        records = [
+            a for a in all_records
+            if a.timestamp.date() == target_date
+            and (since is None or a.timestamp > since)
+        ]
         records.sort(key=lambda x: x.timestamp)
 
         result = []
