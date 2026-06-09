@@ -5,17 +5,12 @@ from ..core import database as db
 
 
 class MappingTab(ctk.CTkFrame):
-    """Biometric code mapping — assign device EmpCodes to School Insights staff.
-
-    Mirrors the web frontend's Biometric Codes page so on-site admins can do
-    the mapping from the desktop app without needing browser access.
-    """
-
     def __init__(self, parent, main_window):
         super().__init__(parent, fg_color="transparent")
         self.main_window = main_window
         self.pack(fill="both", expand=True)
         self._all_staff = []
+        self._local_codes = set()  # bio_codes currently saved in local DB
         self._build()
 
     def _build(self):
@@ -30,11 +25,17 @@ class MappingTab(ctk.CTkFrame):
                       fg_color="#37474f", hover_color="#263238",
                       command=self._load).pack(side="right", padx=(6, 0))
 
+        self._sync_btn = ctk.CTkButton(top, text="Sync Mappings", height=34, width=140,
+                      fg_color="#1565c0", hover_color="#0d47a1",
+                      command=self._sync_mappings)
+        self._sync_btn.pack(side="right", padx=(0, 6))
+
         # ── Stat cards ────────────────────────────────────────────────────────
         cards = ctk.CTkFrame(self, fg_color="transparent")
         cards.pack(fill="x", padx=4, pady=(0, 6))
-        self._total_lbl = self._card(cards, "Total Staff", "—", "#455a64")
-        self._mapped_lbl = self._card(cards, "Mapped", "—", "#1b5e20")
+        self._total_lbl   = self._card(cards, "Total Staff",  "—", "#455a64")
+        self._mapped_lbl  = self._card(cards, "Mapped in SI", "—", "#1b5e20")
+        self._local_lbl   = self._card(cards, "Saved in Local DB", "—", "#0d47a1")
         self._unmapped_lbl = self._card(cards, "Unmapped", "—", "#b71c1c")
 
         # ── Search + filter ───────────────────────────────────────────────────
@@ -56,8 +57,9 @@ class MappingTab(ctk.CTkFrame):
         header = ctk.CTkFrame(self, fg_color="#263238", corner_radius=6, height=34)
         header.pack(fill="x", padx=4)
         header.pack_propagate(False)
-        for text, width in [("Name", 260), ("Designation", 180), ("Department", 160),
-                             ("Device Code", 120), ("Status", 90), ("Action", 90)]:
+        for text, width in [("Name", 240), ("Designation", 160), ("Department", 140),
+                             ("Device Code", 110), ("SI Status", 90),
+                             ("Local DB", 80), ("Action", 90)]:
             ctk.CTkLabel(header, text=text, font=ctk.CTkFont(size=12, weight="bold"),
                          width=width, anchor="w").pack(side="left", padx=6, pady=6)
 
@@ -65,7 +67,7 @@ class MappingTab(ctk.CTkFrame):
         self.table = ctk.CTkScrollableFrame(self, corner_radius=6, fg_color="transparent")
         self.table.pack(fill="both", expand=True, padx=4, pady=(2, 4))
 
-        self.status_label = ctk.CTkLabel(self, text="Click Refresh to load staff.",
+        self.status_label = ctk.CTkLabel(self, text="Click Sync Mappings to pull latest from School Insights.",
                                          font=ctk.CTkFont(size=12), text_color="#888")
         self.status_label.pack(anchor="w", padx=8, pady=4)
 
@@ -76,6 +78,27 @@ class MappingTab(ctk.CTkFrame):
         lbl = ctk.CTkLabel(f, text=value, font=ctk.CTkFont(size=22, weight="bold"))
         lbl.pack(pady=(0, 8))
         return lbl
+
+    def _sync_mappings(self):
+        if not api_client.is_device_approved():
+            self.status_label.configure(
+                text="Device not approved. Complete registration first.", text_color="#ef9a9a")
+            return
+        self._sync_btn.configure(state="disabled", text="Syncing…")
+        self.status_label.configure(text="Syncing mappings from School Insights…", text_color="#4fc3f7")
+
+        def do():
+            ok, mapped, _ = api_client.sync_code_mappings()
+            if ok:
+                self.after(0, lambda: self.status_label.configure(
+                    text=f"Synced — {mapped} mapping(s) saved to local DB.", text_color="#a5d6a7"))
+                self.after(0, self._load)
+            else:
+                self.after(0, lambda: self.status_label.configure(
+                    text=f"Sync failed: {mapped}", text_color="#ef9a9a"))
+            self.after(0, lambda: self._sync_btn.configure(state="normal", text="Sync Mappings"))
+
+        threading.Thread(target=do, daemon=True).start()
 
     def _load(self):
         if not api_client.is_device_approved():
@@ -89,30 +112,33 @@ class MappingTab(ctk.CTkFrame):
         ok, result = api_client.get_biometric_codes()
         if ok:
             self._all_staff = result
+            # Load local DB codes so we can show ✓/✗ per row
+            local_mappings = db.get_all_code_mappings()
+            self._local_codes = set(local_mappings.keys())
             self.after(0, self._update_stats)
             self.after(0, self._filter)
             self.after(0, lambda: self.status_label.configure(
-                text=f"Loaded {len(result)} staff members.", text_color="#a5d6a7"))
+                text=f"Loaded {len(result)} staff.  Local DB: {len(self._local_codes)} mapped.",
+                text_color="#a5d6a7"))
         else:
             self.after(0, lambda: self.status_label.configure(
                 text=f"Failed: {result}", text_color="#ef9a9a"))
 
     def _update_stats(self):
-        total = len(self._all_staff)
-        mapped = sum(1 for s in self._all_staff if s.get("is_mapped"))
+        total   = len(self._all_staff)
+        mapped  = sum(1 for s in self._all_staff if s.get("is_mapped"))
         self._total_lbl.configure(text=str(total))
         self._mapped_lbl.configure(text=str(mapped))
+        self._local_lbl.configure(text=str(len(self._local_codes)))
         self._unmapped_lbl.configure(text=str(total - mapped))
 
     def _filter(self):
         query = self.search_var.get().lower()
-        filt = self.filter_var.get()
+        filt  = self.filter_var.get()
         result = []
         for s in self._all_staff:
-            if filt == "mapped" and not s.get("is_mapped"):
-                continue
-            if filt == "unmapped" and s.get("is_mapped"):
-                continue
+            if filt == "mapped"   and not s.get("is_mapped"): continue
+            if filt == "unmapped" and s.get("is_mapped"):     continue
             if query and query not in s.get("full_name", "").lower() \
                     and query not in (s.get("department") or "").lower():
                 continue
@@ -124,33 +150,42 @@ class MappingTab(ctk.CTkFrame):
             w.destroy()
 
         if not staff:
-            ctk.CTkLabel(self.table,
-                         text="No staff found. Click Refresh to load.",
+            ctk.CTkLabel(self.table, text="No staff found.",
                          text_color="#666").pack(pady=30)
             return
 
         for s in staff:
-            is_mapped = s.get("is_mapped", False)
+            is_mapped  = s.get("is_mapped", False)
+            bio_code   = s.get("biometric_code") or ""
+            in_local   = bool(bio_code) and (bio_code in self._local_codes)
             bg = "#1a2e1a" if is_mapped else "#2e1a1a"
+
             row = ctk.CTkFrame(self.table, fg_color=bg, corner_radius=4, height=36)
             row.pack(fill="x", pady=1)
             row.pack_propagate(False)
 
             for text, width in [
-                (s.get("full_name", ""), 260),
-                (s.get("designation", "") or "", 180),
-                (s.get("department", "") or "", 160),
-                (s.get("biometric_code") or "—", 120),
+                (s.get("full_name", ""),            240),
+                (s.get("designation", "") or "",    160),
+                (s.get("department", "") or "",     140),
+                (bio_code or "—",                   110),
                 ("Mapped" if is_mapped else "Unmapped", 90),
             ]:
-                color = "#a5d6a7" if (text == "Mapped") else ("#ef9a9a" if text == "Unmapped" else None)
+                color = "#a5d6a7" if text == "Mapped" else ("#ef9a9a" if text == "Unmapped" else None)
                 lbl = ctk.CTkLabel(row, text=text, width=width, anchor="w",
                                    font=ctk.CTkFont(size=12))
                 if color:
                     lbl.configure(text_color=color)
                 lbl.pack(side="left", padx=6)
 
-            btn_text = "Edit" if is_mapped else "Assign"
+            # Local DB tick
+            local_text  = "✓ Saved" if in_local else ("✗ Not synced" if is_mapped else "—")
+            local_color = "#66bb6a" if in_local else ("#ffa726" if is_mapped else "#555")
+            ctk.CTkLabel(row, text=local_text, width=80, anchor="w",
+                         font=ctk.CTkFont(size=12),
+                         text_color=local_color).pack(side="left", padx=6)
+
+            btn_text  = "Edit" if is_mapped else "Assign"
             btn_color = "#1565c0" if is_mapped else "#2e7d32"
             ctk.CTkButton(
                 row, text=btn_text, width=80, height=26,
@@ -166,8 +201,8 @@ class MappingTab(ctk.CTkFrame):
         dialog.grab_set()
         dialog.lift()
 
-        name = staff_row.get("full_name", "")
-        code_id = staff_row.get("biometric_code_id")
+        name         = staff_row.get("full_name", "")
+        code_id      = staff_row.get("biometric_code_id")
         current_code = staff_row.get("biometric_code") or ""
 
         ctk.CTkLabel(dialog, text=f"Staff: {name}",
@@ -177,7 +212,7 @@ class MappingTab(ctk.CTkFrame):
 
         code_var = ctk.StringVar(value=current_code)
         entry = ctk.CTkEntry(dialog, textvariable=code_var, width=200, height=36,
-                             placeholder_text="e.g. 71")
+                             placeholder_text="e.g. 1030")
         entry.pack(pady=12)
         entry.focus()
 
@@ -190,16 +225,13 @@ class MappingTab(ctk.CTkFrame):
             if not code:
                 err_lbl.configure(text="Code cannot be empty.")
                 return
-
             btn.configure(state="disabled", text="Saving…")
 
             def do():
                 if code_id:
                     ok, result = api_client.update_biometric_code(code_id, code)
                 else:
-                    ok, result = api_client.assign_biometric_code(
-                        staff_row["user_id"], code)
-
+                    ok, result = api_client.assign_biometric_code(staff_row["user_id"], code)
                 if ok:
                     self.after(0, dialog.destroy)
                     self.after(0, self._load)
