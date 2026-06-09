@@ -104,10 +104,25 @@ def _run_poll(interval_minutes, log_callback):
                     else:
                         log(f"[AutoPull] {device['name']}: no new records")
 
-                    if approved and code_mappings:
+                    if not approved:
+                        log("[Mark] Skipping — device not approved")
+                    elif not code_mappings:
+                        log("[Mark] Skipping — no bio_code mappings (assign codes in Staff tab)")
+                    else:
                         today_str = today.isoformat()
                         mapped_codes = set(code_mappings.keys())
                         marked_codes = db.get_marked_today(today_str)
+
+                        # Show bio_codes that exist in records vs what's mapped
+                        all_today_records = db.get_attendance_by_date(today_str, device["id"])
+                        device_codes_today = set(str(r["user_id"]) for r in all_today_records)
+                        matched = mapped_codes & device_codes_today
+                        no_punch = mapped_codes - device_codes_today
+                        log(f"[Mark] Mapped={len(mapped_codes)} | In device today={len(device_codes_today)} | Matched={len(matched)} | No punch={len(no_punch)}")
+                        if no_punch:
+                            log(f"[Mark] No punch today: {', '.join(sorted(no_punch))}")
+                        if device_codes_today - mapped_codes:
+                            log(f"[Mark] Device codes with no mapping: {', '.join(sorted(device_codes_today - mapped_codes)[:10])}")
 
                         if sorted(mapped_codes) == sorted(marked_codes):
                             log(f"[Mark] All {len(mapped_codes)} mapped staff already marked — skipping")
@@ -123,7 +138,7 @@ def _run_poll(interval_minutes, log_callback):
 
                                 # Read ALL today's punches for this user from local DB
                                 all_today = [
-                                    r for r in db.get_attendance_by_date(today_str, device["id"])
+                                    r for r in all_today_records
                                     if str(r["user_id"]) == bio_code
                                 ]
                                 if not all_today:
