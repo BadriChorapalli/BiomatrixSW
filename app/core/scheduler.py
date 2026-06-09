@@ -2,6 +2,7 @@ import schedule
 import threading
 import time
 import datetime
+import queue
 from datetime import date
 from . import database as db
 from .sync import sync_all_devices, sync_device_users_all, sync_code_mappings_job
@@ -54,6 +55,10 @@ def restart(log_callback=None):
 
 _poll_thread = None
 _poll_running = False
+_command_queue = queue.Queue()
+_sse_thread = None
+_sse_stop_event = None
+_processed_command_ids = set()
 
 
 def _current_interval():
@@ -68,6 +73,340 @@ def _current_interval():
         return 900
 
 
+def _log(log_callback, msg):
+    if log_callback:
+        log_callback(msg)
+
+
+def _post_heartbeat(log_callback, reachable, records_today):
+    from .api_client import post_heartbeat
+    try:
+        ok, _msg = post_heartbeat(reachable, records_today)
+        if ok:
+            _log(log_callback, f"[Heartbeat] device=online reachable={reachable} records={records_today}")
+    except Exception:
+        pass
+
+
+def _count_records_today(today_str, device_id=None):
+    try:
+        return len(db.get_attendance_by_date(today_str, device_id))
+    except Exception:
+        return 0
+
+
+def _mark_records_for_device(device, today, records, log_callback):
+    from .api_client import mark_attendance, is_device_approved, _derive_daily_records
+
+    today_str = today.isoformat()
+    approved = is_device_approved()
+    code_mappings = db.get_all_code_mappings()
+    result = {
+        "device": device["name"],
+        "pulled": len(records or []),
+        "marked": 0,
+        "updated": 0,
+        "no_punch": 0,
+        "failed": 0,
+        "skipped": False,
+    }
+
+    if not approved:
+        result["skipped"] = True
+        result["message"] = "Device not approved in School Insights"
+        return result
+    if not code_mappings:
+        result["skipped"] = True
+        result["message"] = "No staff mapped"
+        return result
+
+    mapped_codes = set(code_mappings.keys())
+    marked_today_data = db.get_marked_today(today_str)
+    marked_codes = set(marked_today_data.keys())
+    all_today_records = db.get_attendance_by_date(today_str, device["id"])
+
+    missed = mapped_codes - marked_codes
+    needs_checkout = set()
+    for bio_code in mapped_codes & marked_codes:
+        if marked_today_data[bio_code] is None:
+            user_recs = [r for r in all_today_records if str(r["user_id"]) == bio_code]
+            if user_recs:
+                derived = _derive_daily_records(user_recs)
+                if derived and derived[0]["check_out"]:
+                    needs_checkout.add(bio_code)
+
+    for bio_code in missed | needs_checkout:
+        mapping = code_mappings.get(bio_code)
+        if not mapping:
+            continue
+        user_records = [r for r in all_today_records if str(r["user_id"]) == bio_code]
+        if not user_records:
+            result["no_punch"] += 1
+            continue
+        derived = _derive_daily_records(user_records)
+        if not derived:
+            continue
+        rec = derived[0]
+        ok, msg = mark_attendance(
+            mapping["si_user_id"],
+            rec["date"],
+            rec["check_in"],
+            rec["check_out"],
+        )
+        if ok:
+            db.save_marked_today(bio_code, today_str, rec["check_out"])
+            if bio_code in missed:
+                result["marked"] += 1
+            else:
+                result["updated"] += 1
+            ci = rec["check_in"][11:16]
+            co = rec["check_out"][11:16] if rec["check_out"] else "-"
+            _log(log_callback, f"[Command] Marked {mapping['si_name']} IN {ci} OUT {co}")
+        else:
+            result["failed"] += 1
+            _log(log_callback, f"[Command] Failed {mapping['si_name']}: {msg}")
+
+    return result
+
+
+def _command_id(command):
+    return command.get("id") or command.get("command_id")
+
+
+def _enabled_devices():
+    return [d for d in db.get_all_devices() if d["enabled"]]
+
+
+def _execute_sync_now(log_callback, last_pull):
+    from .device import pull_attendance
+    from .database import save_attendance
+
+    today = date.today()
+    device_results = []
+    for device in _enabled_devices():
+        since = last_pull.get(device["id"])
+        ok, pulled = pull_attendance(
+            device["ip"], device["port"], device["password"], today,
+            since=since, force_udp=bool(device.get("force_udp", 0))
+        )
+        if not ok:
+            _log(log_callback, f"[Command] sync_now: {device['name']} offline: {pulled}")
+            _post_heartbeat(log_callback, False, 0)
+            device_results.append({"device": device["name"], "ok": False, "error": str(pulled)})
+            continue
+
+        if pulled:
+            save_attendance(device["id"], device["name"], pulled)
+        records_today = _count_records_today(today.isoformat(), device["id"])
+        _post_heartbeat(log_callback, True, records_today)
+        mark_result = _mark_records_for_device(device, today, pulled, log_callback)
+        mark_result["ok"] = True
+        device_results.append(mark_result)
+        last_pull[device["id"]] = datetime.datetime.now()
+
+    return {"devices": device_results}
+
+
+def _execute_reconcile(log_callback):
+    from .device import get_device_users
+    from .api_client import build_reconciliation_report
+
+    all_users = {}
+    device_results = []
+    for device in _enabled_devices():
+        ok, users_or_err = get_device_users(
+            device["ip"], device["port"], device["password"],
+            force_udp=bool(device.get("force_udp", 0))
+        )
+        if ok:
+            for user in users_or_err:
+                all_users[str(user["user_id"])] = user
+            device_results.append({"device": device["name"], "ok": True, "users": len(users_or_err)})
+        else:
+            device_results.append({"device": device["name"], "ok": False, "error": str(users_or_err)})
+            _log(log_callback, f"[Reconcile] {device['name']} failed: {users_or_err}")
+
+    report = build_reconciliation_report(list(all_users.values()), date.today())
+    report["device_results"] = device_results
+    summary = report["summary"]
+    _log(
+        log_callback,
+        f"[Reconcile] {report['mapped_count']} mapped | "
+        f"{sum(1 for row in report['staff'] if row['marked_biometric'])} marked (bio) | "
+        f"{summary['present']} marked (any) | "
+        f"{report['device_enrolled_count']} on device | "
+        f"{len(report['unmapped_device_users'])} unmapped"
+    )
+    return report
+
+
+def _execute_verify_today(log_callback):
+    from .device import pull_attendance
+    from .database import save_attendance
+    from .api_client import verify_today_attendance
+
+    today = date.today()
+    all_records = []
+    device_results = []
+    for device in _enabled_devices():
+        ok, pulled = pull_attendance(
+            device["ip"], device["port"], device["password"], today,
+            since=None, force_udp=bool(device.get("force_udp", 0))
+        )
+        if ok:
+            if pulled:
+                save_attendance(device["id"], device["name"], pulled)
+            all_records.extend(pulled)
+            device_results.append({"device": device["name"], "ok": True, "records": len(pulled)})
+        else:
+            device_results.append({"device": device["name"], "ok": False, "error": str(pulled)})
+            _log(log_callback, f"[Verify] {device['name']} failed: {pulled}")
+
+    result = verify_today_attendance(all_records, today, log_callback=log_callback)
+    result["device_results"] = device_results
+    _log(
+        log_callback,
+        f"[Verify] corrected={len(result['corrected'])} "
+        f"already_correct={result['already_correct']} "
+        f"no_punches={result['no_punches']} failed={result['failed']}"
+    )
+    return result
+
+
+def _execute_get_status(log_callback):
+    from .device import test_connection
+
+    today_str = date.today().isoformat()
+    devices = []
+    total_records = 0
+    any_reachable = False
+    for device in _enabled_devices():
+        reachable, msg = test_connection(
+            device["ip"], device["port"], device["password"],
+            force_udp=bool(device.get("force_udp", 0))
+        )
+        records_today = _count_records_today(today_str, device["id"])
+        total_records += records_today
+        any_reachable = any_reachable or reachable
+        devices.append({
+            "device": device["name"],
+            "ip": device["ip"],
+            "reachable": reachable,
+            "message": msg,
+            "records_today": records_today,
+        })
+
+    _post_heartbeat(log_callback, any_reachable, total_records)
+    return {
+        "device_status": "online",
+        "biometric_device_reachable": any_reachable,
+        "records_today": total_records,
+        "devices": devices,
+    }
+
+
+def _command_targets_this_client(command, log_callback):
+    from .api_client import get_client_device_id
+
+    local_device_id = get_client_device_id()
+    command_device_id = str(command.get("device_id") or "").strip()
+    if command_device_id == local_device_id:
+        return True
+
+    _log(
+        log_callback,
+        f"[Command] Ignored #{_command_id(command)} for device "
+        f"{command_device_id or 'missing'}; this client is {local_device_id}"
+    )
+    return False
+
+
+def _execute_command(command, log_callback, last_pull):
+    from .api_client import complete_command, post_reconcile_result, post_verify_result
+
+    command_id = _command_id(command)
+    command_type = command.get("command_type")
+    if not _command_targets_this_client(command, log_callback):
+        return
+
+    _log(log_callback, f"[Command] Executing {command_type} #{command_id}")
+
+    try:
+        if command_type == "sync_now":
+            result = _execute_sync_now(log_callback, last_pull)
+            complete_command(command_id, "completed", result)
+            return
+        if command_type == "reconcile":
+            result = _execute_reconcile(log_callback)
+            ok, msg = post_reconcile_result(command_id, result)
+            if not ok:
+                complete_command(command_id, "failed", {"error": msg, "result": result})
+            return
+        if command_type == "verify_today":
+            result = _execute_verify_today(log_callback)
+            ok, msg = post_verify_result(command_id, result)
+            if not ok:
+                complete_command(command_id, "failed", {"error": msg, "result": result})
+            return
+        if command_type == "get_status":
+            result = _execute_get_status(log_callback)
+            complete_command(command_id, "completed", result)
+            return
+
+        complete_command(command_id, "failed", {"error": f"Unknown command_type: {command_type}"})
+    except Exception as exc:
+        complete_command(command_id, "failed", {"error": str(exc)})
+        _log(log_callback, f"[Command] {command_type} failed: {exc}")
+
+
+def _drain_command_queue(log_callback, last_pull):
+    processed = 0
+    while True:
+        try:
+            command = _command_queue.get_nowait()
+        except queue.Empty:
+            break
+        command_id = _command_id(command)
+        if command_id in _processed_command_ids:
+            continue
+        if command_id:
+            _processed_command_ids.add(command_id)
+        _execute_command(command, log_callback, last_pull)
+        processed += 1
+    return processed
+
+
+def _poll_pending_commands(log_callback, last_pull):
+    from .api_client import fetch_pending_commands
+    for command in fetch_pending_commands():
+        command_id = _command_id(command)
+        if command_id in _processed_command_ids:
+            continue
+        if command_id:
+            _processed_command_ids.add(command_id)
+        _execute_command(command, log_callback, last_pull)
+
+
+def _start_sse_listener(log_callback=None):
+    global _sse_thread, _sse_stop_event
+    if _sse_thread and _sse_thread.is_alive():
+        return
+    from .api_client import listen_command_stream
+    _sse_stop_event = threading.Event()
+    _sse_thread = threading.Thread(
+        target=listen_command_stream,
+        args=(_command_queue, _sse_stop_event, log_callback),
+        daemon=True,
+    )
+    _sse_thread.start()
+
+
+def _stop_sse_listener():
+    global _sse_stop_event
+    if _sse_stop_event:
+        _sse_stop_event.set()
+
+
 def _run_poll(interval_minutes, log_callback):
     global _poll_running
     from .device import pull_attendance
@@ -80,6 +419,14 @@ def _run_poll(interval_minutes, log_callback):
 
     # Track per-device last pull time so we only fetch new records each cycle
     last_pull = {}
+    last_command_poll_at = 0
+
+    def poll_commands_if_due(force=False):
+        nonlocal last_command_poll_at
+        now_monotonic = time.monotonic()
+        if force or (now_monotonic - last_command_poll_at) >= 30:
+            _poll_pending_commands(log_callback, last_pull)
+            last_command_poll_at = now_monotonic
 
     def divider(label=""):
         if log_callback and hasattr(log_callback, '__self__'):
@@ -91,6 +438,8 @@ def _run_poll(interval_minutes, log_callback):
         log(f"─── {label} {'─' * max(1, 44 - len(label))}" if label else "─" * 50)
 
     while _poll_running:
+        _drain_command_queue(log_callback, last_pull)
+        poll_commands_if_due()
         devices = [d for d in db.get_all_devices() if d["enabled"]]
         if not devices:
             log("⚠ No enabled devices configured")
@@ -125,6 +474,7 @@ def _run_poll(interval_minutes, log_callback):
 
                 if not ok:
                     log(f"✗ Device offline  {device['name']} ({device['ip']})  —  {result}")
+                    _post_heartbeat(log_callback, False, 0)
                     continue
 
                 if result:
@@ -132,6 +482,7 @@ def _run_poll(interval_minutes, log_callback):
                     log(f"→ Pulled  {len(result)} new records from {device['name']}")
                 else:
                     log(f"→ Pulled  0 new records  (no activity since last check)")
+                _post_heartbeat(log_callback, True, _count_records_today(today.isoformat(), device["id"]))
 
                 # ── Mark attendance ───────────────────────────────────────
                 if not approved:
@@ -234,6 +585,9 @@ def _run_poll(interval_minutes, log_callback):
                 last_pull[device["id"]] = now
                 db.set_setting("last_device_pull", now.strftime("%Y-%m-%d %H:%M:%S"))
 
+        _drain_command_queue(log_callback, last_pull)
+        poll_commands_if_due(force=True)
+
         # Next poll countdown
         total = _current_interval()
         next_time = (datetime.datetime.now() + datetime.timedelta(seconds=total)).strftime("%H:%M:%S")
@@ -241,8 +595,10 @@ def _run_poll(interval_minutes, log_callback):
 
         elapsed = 0
         while elapsed < total and _poll_running:
-            time.sleep(5)
-            elapsed += 5
+            _drain_command_queue(log_callback, last_pull)
+            poll_commands_if_due()
+            time.sleep(1)
+            elapsed += 1
 
 
 def start_device_poll(interval_minutes=5, log_callback=None):
@@ -250,6 +606,7 @@ def start_device_poll(interval_minutes=5, log_callback=None):
     if _poll_running:
         return
     _poll_running = True
+    _start_sse_listener(log_callback)
     _poll_thread = threading.Thread(
         target=_run_poll,
         args=(interval_minutes, log_callback),
@@ -261,6 +618,7 @@ def start_device_poll(interval_minutes=5, log_callback=None):
 def stop_device_poll():
     global _poll_running
     _poll_running = False
+    _stop_sse_listener()
 
 
 def restart_device_poll(interval_minutes=5, log_callback=None):
