@@ -119,7 +119,7 @@ class HistoryTab(ctk.CTkFrame):
             w.destroy()
         for text, width in [("#", 44), ("ID", 60), ("Name", 220),
                              ("Check IN", 80), ("Check OUT", 80),
-                             ("Breaks", 200), ("Punches", 60)]:
+                             ("Server", 90), ("Breaks", 160), ("Punches", 60)]:
             ctk.CTkLabel(self.header_frame, text=text,
                          font=ctk.CTkFont(size=12, weight="bold"),
                          width=width, anchor="w").pack(side="left", padx=6, pady=6)
@@ -144,33 +144,36 @@ class HistoryTab(ctk.CTkFrame):
         with_breaks    = sum(1 for d in daily if d.get("breaks"))
         checkin_only   = len(daily) - with_checkout
 
-        device_name_map = {str(r["user_id"]): r.get("device_name", "") for r in records}
+        # Load server-marked status from local marked_today table
+        marked_data = db.get_marked_today(date_str)  # bio_code → check_out (None if checkin only)
+        server_marked_count = len(marked_data)
 
         self.stats_label.configure(
             text=(f"{date_str}   |   Staff: {len(daily)}   |   "
                   f"Full day: {with_checkout}   |   Check-in only: {checkin_only}"
-                  + (f"   |   Permission breaks: {with_breaks}" if with_breaks else "")),
+                  + (f"   |   Permission breaks: {with_breaks}" if with_breaks else "")
+                  + f"   |   ✓ Marked on server: {server_marked_count}"),
             text_color="white"
         )
         self.export_btn.pack(side="right", padx=10, pady=6)
 
         for i, d in enumerate(daily):
             has_breaks = bool(d.get("breaks"))
-            # taller row when breaks are shown
             row_h = 44 if has_breaks else 32
             bg = "#1a1a2e" if i % 2 == 0 else "#1e1e2e"
             row = ctk.CTkFrame(self.table, fg_color=bg, corner_radius=4, height=row_h)
             row.pack(fill="x", pady=1)
             row.pack_propagate(False)
 
+            bio_code    = str(d["user_id"])
             check_in_t  = _fmt_time(d.get("check_in"))
             check_out_t = _fmt_time(d.get("check_out"))
             raw_count   = d.get("raw_count", 1)
 
             for text, width in [
-                (str(i + 1),          44),
-                (str(d["user_id"]),   60),
-                (d.get("name", ""),  220),
+                (str(i + 1),         44),
+                (bio_code,           60),
+                (d.get("name", ""), 220),
             ]:
                 ctk.CTkLabel(row, text=text, width=width, anchor="w",
                              font=ctk.CTkFont(size=12)).pack(side="left", padx=6)
@@ -184,18 +187,34 @@ class HistoryTab(ctk.CTkFrame):
                          font=ctk.CTkFont(size=12),
                          text_color=out_color).pack(side="left", padx=6)
 
-            # Breaks column — show each intermediate cluster time
+            # Server marked column
+            if bio_code in marked_data:
+                stored_co = marked_data[bio_code]
+                if stored_co:
+                    server_text  = "✓ IN+OUT"
+                    server_color = "#66bb6a"   # green — fully marked
+                else:
+                    server_text  = "✓ IN only"
+                    server_color = "#ffa726"   # orange — check-in sent, awaiting checkout
+            else:
+                server_text  = "—"
+                server_color = "#555"          # grey — not yet marked
+            ctk.CTkLabel(row, text=server_text, width=90, anchor="w",
+                         font=ctk.CTkFont(size=12),
+                         text_color=server_color).pack(side="left", padx=6)
+
+            # Breaks column
             breaks = d.get("breaks", [])
             if breaks:
                 break_text = "  ".join(
                     f"{_fmt_hhmm(b['time'])}({'×'+str(b['raw_count']) if b['raw_count']>1 else ''})"
                     for b in breaks
                 )
-                ctk.CTkLabel(row, text=f"⟳ {break_text}", width=200, anchor="w",
+                ctk.CTkLabel(row, text=f"⟳ {break_text}", width=160, anchor="w",
                              font=ctk.CTkFont(size=11),
                              text_color="#ffb74d").pack(side="left", padx=6)
             else:
-                ctk.CTkLabel(row, text="", width=200, anchor="w",
+                ctk.CTkLabel(row, text="", width=160, anchor="w",
                              font=ctk.CTkFont(size=11)).pack(side="left", padx=6)
 
             punch_color = "#ffb74d" if raw_count > d.get("cluster_count", 1) else "#888"
