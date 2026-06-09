@@ -31,9 +31,20 @@ class RegistrationTab(ctk.CTkFrame):
                                          font=ctk.CTkFont(size=13), text_color="#888")
         self.banner_label.pack(side="left")
 
+        # Re-register button (shown only when APPROVED or PENDING)
+        self.reregister_btn = ctk.CTkButton(
+            self.status_banner, text="Re-register", width=110, height=30,
+            fg_color="#37474f", hover_color="#263238",
+            command=self._show_form
+        )
+
+        # ── Registration form (hidden when APPROVED / PENDING) ────────────────
+        self.form_frame = ctk.CTkFrame(scroll, fg_color="transparent")
+        self.form_frame.pack(fill="x")
+
         # Step 1 - Organization
-        self._section(scroll, "Step 1 — Select Organization")
-        org_row = ctk.CTkFrame(scroll, fg_color="transparent")
+        self._section(self.form_frame, "Step 1 — Select Organization")
+        org_row = ctk.CTkFrame(self.form_frame, fg_color="transparent")
         org_row.pack(fill="x", padx=16, pady=(4, 0))
         self.org_var = ctk.StringVar(value="Select organization...")
         self.org_menu = ctk.CTkOptionMenu(org_row, variable=self.org_var,
@@ -44,42 +55,42 @@ class RegistrationTab(ctk.CTkFrame):
                       command=self._load_orgs).pack(side="left", padx=8)
 
         # Step 2 - School
-        self._section(scroll, "Step 2 — Select School")
+        self._section(self.form_frame, "Step 2 — Select School")
         self.school_var = ctk.StringVar(value="Select school...")
-        self.school_menu = ctk.CTkOptionMenu(scroll, variable=self.school_var,
+        self.school_menu = ctk.CTkOptionMenu(self.form_frame, variable=self.school_var,
                                              values=["Select school..."],
                                              width=320, height=36)
         self.school_menu.pack(anchor="w", padx=16, pady=(4, 0))
 
         # Step 3 - Device Info
-        self._section(scroll, "Step 3 — Device Info")
-        ctk.CTkLabel(scroll, text="Device Name", anchor="w").pack(fill="x", padx=16, pady=(4, 2))
-        self.device_name = ctk.CTkEntry(scroll, placeholder_text="e.g. Main Gate Biometric",
+        self._section(self.form_frame, "Step 3 — Device Info")
+        ctk.CTkLabel(self.form_frame, text="Device Name", anchor="w").pack(fill="x", padx=16, pady=(4, 2))
+        self.device_name = ctk.CTkEntry(self.form_frame, placeholder_text="e.g. Main Gate Biometric",
                                         height=36)
         self.device_name.pack(fill="x", padx=16)
 
-        ctk.CTkLabel(scroll, text="Location", anchor="w").pack(fill="x", padx=16, pady=(10, 2))
-        self.location = ctk.CTkEntry(scroll, placeholder_text="e.g. School Front Gate",
+        ctk.CTkLabel(self.form_frame, text="Location", anchor="w").pack(fill="x", padx=16, pady=(10, 2))
+        self.location = ctk.CTkEntry(self.form_frame, placeholder_text="e.g. School Front Gate",
                                      height=36)
         self.location.pack(fill="x", padx=16)
 
-        # Device ID display
         device_id = api_client._get_device_id()
-        ctk.CTkLabel(scroll, text=f"Device ID: {device_id[:24]}...",
+        ctk.CTkLabel(self.form_frame, text=f"Device ID: {device_id[:24]}...",
                      text_color="#555", font=ctk.CTkFont(size=11)).pack(anchor="w", padx=16, pady=(8, 0))
 
-        # Submit
-        self.submit_btn = ctk.CTkButton(scroll, text="Submit Registration Request",
+        self.submit_btn = ctk.CTkButton(self.form_frame, text="Submit Registration Request",
                                         height=42, font=ctk.CTkFont(size=13, weight="bold"),
                                         fg_color="#1565c0", hover_color="#0d47a1",
                                         command=self._submit)
         self.submit_btn.pack(fill="x", padx=16, pady=16)
 
-        self.msg_label = ctk.CTkLabel(scroll, text="", font=ctk.CTkFont(size=12),
+        self.msg_label = ctk.CTkLabel(self.form_frame, text="", font=ctk.CTkFont(size=12),
                                       wraplength=500)
         self.msg_label.pack(anchor="w", padx=16)
 
-        # Approval status section
+        # ── Approval status section (always visible) ──────────────────────────
+        self._approval_section_anchor = ctk.CTkFrame(scroll, height=0, fg_color="transparent")
+        self._approval_section_anchor.pack(fill="x")
         self._section(scroll, "Approval Status")
         self.approval_frame = ctk.CTkFrame(scroll, fg_color="#1e1e2e", corner_radius=8)
         self.approval_frame.pack(fill="x", padx=16, pady=(4, 0))
@@ -106,14 +117,24 @@ class RegistrationTab(ctk.CTkFrame):
                      font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w", padx=16, pady=(16, 2))
         ctk.CTkFrame(parent, height=1, fg_color="#333").pack(fill="x", padx=16, pady=(0, 4))
 
+    def _hide_form(self):
+        self.form_frame.pack_forget()
+        self.reregister_btn.pack(side="right", padx=12)
+
+    def _show_form(self):
+        self.form_frame.pack(fill="x", before=self._approval_section_anchor)
+        self.reregister_btn.pack_forget()
+
     def _check_existing_status(self):
         status = db.get_setting("si_device_status", "")
         request_id = db.get_setting("si_request_id", "")
         if status == "APPROVED":
             self._set_banner("APPROVED")
+            self._hide_form()
         elif status == "PENDING" and request_id:
             self._set_banner("PENDING")
             self.request_label.configure(text=f"Request ID: {request_id}")
+            self._hide_form()
         elif status == "REJECTED":
             self._set_banner("REJECTED")
 
@@ -127,8 +148,7 @@ class RegistrationTab(ctk.CTkFrame):
         self.status_banner.configure(fg_color=bg)
         self.banner_icon.configure(text_color=text_color)
         self.banner_label.configure(text=label, text_color=text_color)
-        self.approval_status.configure(text=f"Status: {status}",
-                                       text_color=text_color)
+        self.approval_status.configure(text=f"Status: {status}", text_color=text_color)
 
     def _load_orgs(self):
         self.org_menu.configure(values=["Loading..."])
@@ -206,9 +226,9 @@ class RegistrationTab(ctk.CTkFrame):
         def do():
             ok, result = api_client.submit_device_request(org["id"], school["id"], name, loc)
             if ok:
-                self.after(0, lambda: self.request_label.configure(
-                    text=f"Request ID: {result}"))
+                self.after(0, lambda: self.request_label.configure(text=f"Request ID: {result}"))
                 self.after(0, lambda: self._set_banner("PENDING"))
+                self.after(0, self._hide_form)
                 self.after(0, lambda: self.msg_label.configure(
                     text="Request submitted! Ask your School Insights admin to approve it.",
                     text_color="#a5d6a7"))
@@ -228,6 +248,7 @@ class RegistrationTab(ctk.CTkFrame):
                 status = result.get("status", "PENDING")
                 self.after(0, lambda: self._set_banner(status))
                 if status == "APPROVED":
+                    self.after(0, self._hide_form)
                     self.after(0, lambda: self.msg_label.configure(
                         text="Device approved! Attendance sync is now active.",
                         text_color="#a5d6a7"))
@@ -265,6 +286,7 @@ class RegistrationTab(ctk.CTkFrame):
                     self.after(0, lambda: self.poll_btn.configure(
                         text="Auto Poll", fg_color="#2e7d32"))
                     if status == "APPROVED":
+                        self.after(0, self._hide_form)
                         self.after(0, lambda: self.msg_label.configure(
                             text="Device approved! Attendance sync is now active.",
                             text_color="#a5d6a7"))
