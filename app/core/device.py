@@ -2,9 +2,15 @@ from zk import ZK
 from datetime import date, datetime
 
 
-def get_device_users(ip, port, password):
+def _zk(ip, port, password, force_udp=False):
+    """Create a ZK connection object. force_udp=True for older/UDP-only devices."""
+    return ZK(ip, port=int(port), timeout=10, password=int(password),
+               force_udp=bool(force_udp), ommit_ping=False)
+
+
+def get_device_users(ip, port, password, force_udp=False):
     """Pull all enrolled users from the biometric device."""
-    zk = ZK(ip, port=int(port), timeout=10, password=int(password))
+    zk = _zk(ip, port, password, force_udp)
     conn = None
     try:
         conn = zk.connect()
@@ -29,8 +35,9 @@ def get_device_users(ip, port, password):
                 pass
 
 
-def test_connection(ip, port, password):
-    zk = ZK(ip, port=int(port), timeout=5, password=int(password))
+def test_connection(ip, port, password, force_udp=False):
+    zk = _zk(ip, port, password, force_udp)
+    conn = None
     try:
         conn = zk.connect()
         name = conn.get_device_name()
@@ -39,17 +46,24 @@ def test_connection(ip, port, password):
         return True, f"Connected: {name} | Serial: {serial}"
     except Exception as e:
         return False, str(e)
+    finally:
+        if conn:
+            try:
+                conn.disconnect()
+            except Exception:
+                pass
 
 
-def pull_attendance(ip, port, password, target_date=None, since=None):
+def pull_attendance(ip, port, password, target_date=None, since=None, force_udp=False):
     """Pull attendance records from device.
 
-    since: datetime — if given, only return records with timestamp > since.
+    since     : datetime — if given, only return records with timestamp > since.
+    force_udp : bool     — True for older ZKTeco-compatible devices that need UDP.
     """
     if target_date is None:
         target_date = date.today()
 
-    zk = ZK(ip, port=int(port), timeout=10, password=int(password))
+    zk = _zk(ip, port, password, force_udp)
     conn = None
     try:
         conn = zk.connect()
@@ -65,13 +79,14 @@ def pull_attendance(ip, port, password, target_date=None, since=None):
         result = []
         for r in records:
             result.append({
-                "user_id": r.user_id,
-                "name": users.get(r.user_id, "Unknown"),
-                "date": r.timestamp.strftime("%Y-%m-%d"),
-                "time": r.timestamp.strftime("%H:%M:%S"),
-                "datetime": r.timestamp.strftime("%Y-%m-%d %H:%M:%S"),
-                "status": "CHECK IN" if r.status == 0 else "CHECK OUT",
+                "user_id":    r.user_id,
+                "name":       users.get(r.user_id, "Unknown"),
+                "date":       r.timestamp.strftime("%Y-%m-%d"),
+                "time":       r.timestamp.strftime("%H:%M:%S"),
+                "datetime":   r.timestamp.strftime("%Y-%m-%d %H:%M:%S"),
+                "status":     "CHECK IN" if r.status == 0 else "CHECK OUT",
                 "status_code": r.status,
+                "punch":      getattr(r, "punch", 0),  # 0=finger, 1=fp, 2=card, 3=password
             })
         return True, result
     except Exception as e:

@@ -3,6 +3,9 @@ import threading
 from ..core import database as db
 from ..core.device import test_connection
 
+BRANDS = ["eSSL", "ZKTeco", "Realtime", "FingerTec", "Anviz", "Matrix", "Other"]
+PROTOCOLS = ["TCP (default)", "UDP (older devices)"]
+
 
 class DevicesTab(ctk.CTkFrame):
     def __init__(self, parent, main_window):
@@ -37,14 +40,31 @@ class DevicesTab(ctk.CTkFrame):
         form = ctk.CTkFrame(right, fg_color="transparent")
         form.pack(fill="x", padx=16)
 
-        fields = [("Device Name", "e.g. Main Gate"), ("IP Address", "e.g. 192.168.100.9"),
-                  ("Port", "4370"), ("Password (0 if none)", "0")]
+        # Text fields
+        text_fields = [
+            ("Device Name", "e.g. Main Gate"),
+            ("IP Address",  "e.g. 192.168.100.9"),
+            ("Port",        "4370"),
+            ("Password (0 if none)", "0"),
+        ]
         self.entries = {}
-        for label, placeholder in fields:
+        for label, placeholder in text_fields:
             ctk.CTkLabel(form, text=label, anchor="w").pack(fill="x", pady=(8, 2))
             e = ctk.CTkEntry(form, placeholder_text=placeholder, height=36)
             e.pack(fill="x")
             self.entries[label] = e
+
+        # Brand dropdown
+        ctk.CTkLabel(form, text="Device Brand", anchor="w").pack(fill="x", pady=(8, 2))
+        self.brand_var = ctk.StringVar(value=BRANDS[0])
+        self.brand_menu = ctk.CTkOptionMenu(form, variable=self.brand_var, values=BRANDS, height=36)
+        self.brand_menu.pack(fill="x")
+
+        # Protocol dropdown
+        ctk.CTkLabel(form, text="Connection Protocol", anchor="w").pack(fill="x", pady=(8, 2))
+        self.protocol_var = ctk.StringVar(value=PROTOCOLS[0])
+        self.protocol_menu = ctk.CTkOptionMenu(form, variable=self.protocol_var, values=PROTOCOLS, height=36)
+        self.protocol_menu.pack(fill="x")
 
         # Status label
         self.status_label = ctk.CTkLabel(right, text="", text_color="#4fc3f7")
@@ -68,9 +88,12 @@ class DevicesTab(ctk.CTkFrame):
         for w in self.list_frame.winfo_children():
             w.destroy()
         for device in db.get_all_devices():
-            btn = ctk.CTkButton(self.list_frame, text=f"{device['name']}\n{device['ip']}",
+            brand = device.get("brand") or "eSSL"
+            proto = "UDP" if device.get("force_udp") else "TCP"
+            label = f"{device['name']}\n{device['ip']}  •  {brand} / {proto}"
+            btn = ctk.CTkButton(self.list_frame, text=label,
                                 anchor="w", fg_color="#1e1e2e", hover_color="#263238",
-                                command=lambda d=device: self._load_device(d), height=48)
+                                command=lambda d=device: self._load_device(d), height=52)
             btn.pack(fill="x", pady=2)
 
     def _load_device(self, device):
@@ -83,6 +106,9 @@ class DevicesTab(ctk.CTkFrame):
         self.entries["Port"].insert(0, str(device["port"]))
         self.entries["Password (0 if none)"].delete(0, "end")
         self.entries["Password (0 if none)"].insert(0, str(device["password"]))
+        brand = device.get("brand") or "eSSL"
+        self.brand_var.set(brand if brand in BRANDS else "Other")
+        self.protocol_var.set(PROTOCOLS[1] if device.get("force_udp") else PROTOCOLS[0])
         self.status_label.configure(text="")
         self.delete_btn.pack(side="right")
 
@@ -92,8 +118,13 @@ class DevicesTab(ctk.CTkFrame):
             e.delete(0, "end")
         self.entries["Port"].insert(0, "4370")
         self.entries["Password (0 if none)"].insert(0, "0")
+        self.brand_var.set(BRANDS[0])
+        self.protocol_var.set(PROTOCOLS[0])
         self.status_label.configure(text="")
         self.delete_btn.pack_forget()
+
+    def _force_udp(self):
+        return 1 if self.protocol_var.get() == PROTOCOLS[1] else 0
 
     def _test_connection(self):
         ip = self.entries["IP Address"].get().strip()
@@ -102,10 +133,12 @@ class DevicesTab(ctk.CTkFrame):
         if not ip:
             self.status_label.configure(text="Enter an IP address first.", text_color="#ef9a9a")
             return
-        self.status_label.configure(text="Testing...", text_color="#4fc3f7")
+        force_udp = bool(self._force_udp())
+        proto = "UDP" if force_udp else "TCP"
+        self.status_label.configure(text=f"Testing ({proto})…", text_color="#4fc3f7")
 
         def do_test():
-            ok, msg = test_connection(ip, port, pwd)
+            ok, msg = test_connection(ip, port, pwd, force_udp=force_udp)
             color = "#a5d6a7" if ok else "#ef9a9a"
             self.after(0, lambda: self.status_label.configure(text=msg, text_color=color))
 
@@ -113,19 +146,21 @@ class DevicesTab(ctk.CTkFrame):
 
     def _save_device(self):
         name = self.entries["Device Name"].get().strip()
-        ip = self.entries["IP Address"].get().strip()
+        ip   = self.entries["IP Address"].get().strip()
         port = self.entries["Port"].get().strip() or "4370"
-        pwd = self.entries["Password (0 if none)"].get().strip() or "0"
+        pwd  = self.entries["Password (0 if none)"].get().strip() or "0"
+        brand     = self.brand_var.get()
+        force_udp = self._force_udp()
 
         if not name or not ip:
             self.status_label.configure(text="Name and IP are required.", text_color="#ef9a9a")
             return
 
         if self._editing_id:
-            db.update_device(self._editing_id, name, ip, port, pwd)
+            db.update_device(self._editing_id, name, ip, port, pwd, brand, force_udp)
             self.status_label.configure(text="Device updated.", text_color="#a5d6a7")
         else:
-            db.add_device(name, ip, port, pwd)
+            db.add_device(name, ip, port, pwd, brand, force_udp)
             self.status_label.configure(text="Device added.", text_color="#a5d6a7")
             self._clear_form()
 

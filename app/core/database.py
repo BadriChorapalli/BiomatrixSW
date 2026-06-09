@@ -34,6 +34,8 @@ def init_db():
             port INTEGER DEFAULT 4370,
             password INTEGER DEFAULT 0,
             enabled INTEGER DEFAULT 1,
+            brand TEXT DEFAULT 'eSSL',
+            force_udp INTEGER DEFAULT 0,
             created_at TEXT DEFAULT (datetime('now'))
         );
 
@@ -84,8 +86,27 @@ def init_db():
             si_name TEXT,
             updated_at TEXT DEFAULT (datetime('now'))
         );
+
+        CREATE TABLE IF NOT EXISTS marked_today (
+            bio_code TEXT,
+            date TEXT,
+            marked_at TEXT DEFAULT (datetime('now')),
+            PRIMARY KEY (bio_code, date)
+        );
     """)
     conn.commit()
+
+    # Migrate existing installations — add columns if absent
+    for col, definition in [
+        ("brand",     "TEXT DEFAULT 'eSSL'"),
+        ("force_udp", "INTEGER DEFAULT 0"),
+    ]:
+        try:
+            conn.execute(f"ALTER TABLE devices ADD COLUMN {col} {definition}")
+            conn.commit()
+        except Exception:
+            pass  # column already exists
+
     conn.close()
 
 
@@ -97,18 +118,22 @@ def get_all_devices():
     return [dict(r) for r in rows]
 
 
-def add_device(name, ip, port, password):
+def add_device(name, ip, port, password, brand="eSSL", force_udp=0):
     conn = get_conn()
-    conn.execute("INSERT INTO devices (name, ip, port, password) VALUES (?, ?, ?, ?)",
-                 (name, ip, int(port), int(password)))
+    conn.execute(
+        "INSERT INTO devices (name, ip, port, password, brand, force_udp) VALUES (?,?,?,?,?,?)",
+        (name, ip, int(port), int(password), brand, int(force_udp))
+    )
     conn.commit()
     conn.close()
 
 
-def update_device(device_id, name, ip, port, password):
+def update_device(device_id, name, ip, port, password, brand="eSSL", force_udp=0):
     conn = get_conn()
-    conn.execute("UPDATE devices SET name=?, ip=?, port=?, password=? WHERE id=?",
-                 (name, ip, int(port), int(password), device_id))
+    conn.execute(
+        "UPDATE devices SET name=?, ip=?, port=?, password=?, brand=?, force_udp=? WHERE id=?",
+        (name, ip, int(port), int(password), brand, int(force_udp), device_id)
+    )
     conn.commit()
     conn.close()
 
@@ -251,6 +276,27 @@ def get_all_code_mappings():
     rows = conn.execute("SELECT * FROM code_mappings").fetchall()
     conn.close()
     return {r["bio_code"]: dict(r) for r in rows}
+
+
+def get_marked_today(date_str):
+    """Return set of bio_codes already successfully marked for the given date."""
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT bio_code FROM marked_today WHERE date=?", (date_str,)
+    ).fetchall()
+    conn.close()
+    return {r[0] for r in rows}
+
+
+def save_marked_today(bio_code, date_str):
+    """Record that bio_code was successfully marked for date_str."""
+    conn = get_conn()
+    conn.execute(
+        "INSERT OR IGNORE INTO marked_today (bio_code, date) VALUES (?, ?)",
+        (str(bio_code), date_str)
+    )
+    conn.commit()
+    conn.close()
 
 
 def get_logs(limit=100):

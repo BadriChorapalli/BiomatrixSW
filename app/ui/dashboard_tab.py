@@ -66,8 +66,14 @@ class DashboardTab(ctk.CTkFrame):
     def _schedule_refresh(self):
         """Auto-refresh every 60 seconds."""
         self._refresh_stat_pull()
+        self._refresh_records_today()
         self._refresh_attendance_status()
         self.after(60_000, self._schedule_refresh)
+
+    def _refresh_records_today(self):
+        import datetime
+        today_records = db.get_attendance_by_date(datetime.date.today().isoformat())
+        self.stat_records.configure(text=str(len(today_records)))
 
     def _refresh_stat_pull(self):
         last = db.get_setting("last_device_pull", "")
@@ -171,6 +177,10 @@ class DashboardTab(ctk.CTkFrame):
         logs = db.get_logs(1)
         if logs:
             self.stat_synced.configure(text=logs[0]["synced_at"][:16])
+
+        import datetime
+        today_records = db.get_attendance_by_date(datetime.date.today().isoformat())
+        self.stat_records.configure(text=str(len(today_records)))
 
         sync_time = db.get_setting("sync_time", "18:00")
         self.stat_schedule.configure(text=sync_time)

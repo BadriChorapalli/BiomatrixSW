@@ -94,42 +94,48 @@ def _run_poll(interval_minutes, log_callback):
                     return
                 since = last_pull.get(device["id"])
                 ok, result = pull_attendance(
-                    device["ip"], device["port"], device["password"], today, since=since
+                    device["ip"], device["port"], device["password"], today,
+                    since=since, force_udp=bool(device.get("force_udp", 0))
                 )
                 if ok:
                     if result:
                         save_attendance(device["id"], device["name"], result)
                         log(f"[AutoPull] {device['name']}: {len(result)} new records")
+                    else:
+                        log(f"[AutoPull] {device['name']}: no new records")
 
-                        if approved:
-                            marked, skipped, failed = 0, 0, 0
+                    if approved and code_mappings:
+                        today_str = today.isoformat()
+                        mapped_codes = set(code_mappings.keys())
+                        marked_codes = db.get_marked_today(today_str)
 
-                            # Affected users in this pull cycle
-                            affected = set(str(r["user_id"]) for r in result)
+                        if sorted(mapped_codes) == sorted(marked_codes):
+                            log(f"[Mark] All {len(mapped_codes)} mapped staff already marked — skipping")
+                        else:
+                            missed = mapped_codes - marked_codes
+                            log(f"[Mark] {len(marked_codes)}/{len(mapped_codes)} marked — checking {len(missed)} missed")
 
-                            for bio_code in affected:
+                            marked_count, failed = 0, 0
+                            for bio_code in missed:
                                 mapping = code_mappings.get(bio_code)
                                 if not mapping:
-                                    skipped += 1
                                     continue
 
                                 # Read ALL today's punches for this user from local DB
                                 all_today = [
-                                    r for r in db.get_attendance_by_date(today.isoformat(), device["id"])
+                                    r for r in db.get_attendance_by_date(today_str, device["id"])
                                     if str(r["user_id"]) == bio_code
                                 ]
                                 if not all_today:
                                     continue
 
-                                # Use the same edge-case logic as batch upload:
-                                # collapses double-taps, derives check_in/check_out correctly
                                 derived = _derive_daily_records(all_today)
                                 if not derived:
                                     continue
 
                                 rec = derived[0]
                                 check_in  = rec["check_in"]
-                                check_out = rec["check_out"]  # None if only one cluster
+                                check_out = rec["check_out"]
 
                                 p_ok, p_msg = mark_attendance(
                                     mapping["si_user_id"],
@@ -138,19 +144,18 @@ def _run_poll(interval_minutes, log_callback):
                                     check_out,
                                 )
                                 if p_ok:
-                                    marked += 1
+                                    db.save_marked_today(bio_code, today_str)
+                                    marked_count += 1
                                     co = check_out[11:16] if check_out else "—"
-                                    log(f"[Mark] {rec['name']}: in={check_in[11:16]} out={co}")
+                                    log(f"[Mark] {mapping['si_name']}: in={check_in[11:16]} out={co}")
                                 else:
                                     failed += 1
-                                    log(f"[Mark] {rec['name']}: {p_msg}")
+                                    log(f"[Mark] {mapping['si_name']}: {p_msg}")
 
-                            parts = [f"{marked} marked"]
-                            if skipped: parts.append(f"{skipped} unmapped")
-                            if failed:  parts.append(f"{failed} failed")
-                            log(f"[Mark] {device['name']}: {', '.join(parts)}")
-                    else:
-                        log(f"[AutoPull] {device['name']}: no new records")
+                            if marked_count or failed:
+                                parts = [f"{marked_count} marked"]
+                                if failed: parts.append(f"{failed} failed")
+                                log(f"[Mark] {device['name']}: {', '.join(parts)}")
 
                     last_pull[device["id"]] = now
                     db.set_setting("last_device_pull", now.strftime("%Y-%m-%d %H:%M:%S"))
