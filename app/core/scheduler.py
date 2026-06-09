@@ -100,6 +100,16 @@ def _run_poll(interval_minutes, log_callback):
             approved     = is_device_approved()
             code_mappings = db.get_all_code_mappings()
 
+            # Re-sync code mappings from SI on every cycle so newly
+            # assigned bio-codes are picked up without waiting until 07:01
+            from .api_client import sync_code_mappings
+            try:
+                m_ok, m_mapped, _ = sync_code_mappings()
+                if m_ok:
+                    code_mappings = db.get_all_code_mappings()
+            except Exception:
+                pass
+
             for device in devices:
                 if not _poll_running:
                     return
