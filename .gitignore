@@ -29,6 +29,15 @@ logs/
 .DS_Store
 .AppleDouble
 .LSOverride
+._*
+.Spotlight-V100
+.Trashes
+.fseventsd
+.TemporaryItems
+*.app
+
+# macOS app entitlements (runtime only)
+entitlements.plist
 
 # Windows
 Thumbs.db
@@ -40,3 +49,7 @@ Desktop.ini
 .vscode/
 *.sublime-project
 *.sublime-workspace
+
+# Claude / GitHub config (local only)
+.claude/
+.github/
