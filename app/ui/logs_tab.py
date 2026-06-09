@@ -23,8 +23,10 @@ class LogsTab(ctk.CTkFrame):
         self.log_box.pack(fill="both", expand=True, padx=4, pady=6)
 
     def append(self, message):
+        import datetime
+        ts = datetime.datetime.now().strftime("%H:%M:%S")
         self.log_box.configure(state="normal")
-        self.log_box.insert("end", message + "\n")
+        self.log_box.insert("end", f"[{ts}] {message}\n")
         self.log_box.see("end")
         self.log_box.configure(state="disabled")
 

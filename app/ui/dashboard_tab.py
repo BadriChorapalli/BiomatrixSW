@@ -30,6 +30,14 @@ class DashboardTab(ctk.CTkFrame):
         )
         self.autopull_banner.pack(anchor="w", padx=10, pady=(0, 4))
 
+        # Today's attendance status for mapped users
+        ctk.CTkLabel(self, text="Today's Attendance (Mapped Staff)",
+                     font=ctk.CTkFont(size=13, weight="bold")).pack(
+            anchor="w", padx=8, pady=(4, 2))
+
+        self.attendance_frame = ctk.CTkScrollableFrame(self, corner_radius=8, height=160)
+        self.attendance_frame.pack(fill="x", padx=4, pady=(0, 6))
+
         # Device list with sync buttons
         ctk.CTkLabel(self, text="Configured Devices",
                      font=ctk.CTkFont(size=13, weight="bold")).pack(
@@ -56,8 +64,9 @@ class DashboardTab(ctk.CTkFrame):
         return val_label
 
     def _schedule_refresh(self):
-        """Auto-refresh every 60 seconds so Last Auto-Pull stays current."""
+        """Auto-refresh every 60 seconds."""
         self._refresh_stat_pull()
+        self._refresh_attendance_status()
         self.after(60_000, self._schedule_refresh)
 
     def _refresh_stat_pull(self):
@@ -81,6 +90,47 @@ class DashboardTab(ctk.CTkFrame):
                 text_color="#888",
             )
 
+    def _refresh_attendance_status(self):
+        from datetime import date
+        from collections import defaultdict
+
+        for w in self.attendance_frame.winfo_children():
+            w.destroy()
+
+        mappings = db.get_all_code_mappings()
+        if not mappings:
+            ctk.CTkLabel(self.attendance_frame, text="No mapped staff yet — assign codes in Staff tab.",
+                         text_color="#666", font=ctk.CTkFont(size=11)).pack(anchor="w", padx=8, pady=6)
+            return
+
+        today = date.today().isoformat()
+        all_records = db.get_attendance_by_date(today)
+        user_records = defaultdict(list)
+        for r in all_records:
+            user_records[str(r["user_id"])].append(r)
+
+        # Header
+        hdr = ctk.CTkFrame(self.attendance_frame, fg_color="transparent")
+        hdr.pack(fill="x", padx=4)
+        for text, w in [("", 18), ("Name", 180), ("Check-In", 80), ("Check-Out", 80), ("Punches", 60)]:
+            ctk.CTkLabel(hdr, text=text, width=w, anchor="w",
+                         font=ctk.CTkFont(size=11), text_color="#888").pack(side="left")
+
+        for bio_code, m in sorted(mappings.items(), key=lambda x: x[1]["si_name"]):
+            punches = sorted(user_records.get(bio_code, []), key=lambda r: r["time"])
+            has_data = bool(punches)
+            check_in  = punches[0]["time"][:5]  if punches else "—"
+            check_out = punches[-1]["time"][:5] if len(punches) > 1 else "—"
+            dot_color = "#4caf50" if has_data else "#ef5350"
+
+            row = ctk.CTkFrame(self.attendance_frame, fg_color="#1e1e2e", corner_radius=6)
+            row.pack(fill="x", pady=2, padx=2)
+            ctk.CTkLabel(row, text="●", text_color=dot_color, width=18).pack(side="left", padx=(8, 0))
+            ctk.CTkLabel(row, text=m["si_name"], width=180, anchor="w").pack(side="left", padx=4)
+            ctk.CTkLabel(row, text=check_in,  width=80, anchor="w", text_color="#a5d6a7").pack(side="left")
+            ctk.CTkLabel(row, text=check_out, width=80, anchor="w", text_color="#90caf9").pack(side="left")
+            ctk.CTkLabel(row, text=str(len(punches)), width=60, anchor="w", text_color="#888").pack(side="left")
+
     def refresh(self):
         for w in self.device_list_frame.winfo_children():
             w.destroy()
@@ -96,6 +146,7 @@ class DashboardTab(ctk.CTkFrame):
         self.stat_schedule.configure(text=sync_time)
 
         self._refresh_stat_pull()
+        self._refresh_attendance_status()
 
         if not devices:
             ctk.CTkLabel(self.device_list_frame, text="No devices added yet. Go to Devices tab to add one.",

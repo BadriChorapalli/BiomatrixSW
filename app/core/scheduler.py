@@ -102,24 +102,63 @@ def _run_poll(interval_minutes, log_callback):
                         log(f"[AutoPull] {device['name']}: {len(result)} new records")
 
                         if approved:
-                            # Error codes that mean "already recorded" — not real failures
                             _SKIP_CODES = {"DUPLICATE_PUNCH", "ALREADY_CHECKED_IN", "TOO_SOON"}
+                            _MIN_GAP = 5 * 60  # seconds
                             punched, skipped, already, failed = 0, 0, 0, 0
-                            for rec in result:
-                                mapping = code_mappings.get(str(rec["user_id"]))
+
+                            # Collect affected user_ids from new records
+                            affected = set(str(r["user_id"]) for r in result)
+
+                            for bio_code in affected:
+                                mapping = code_mappings.get(bio_code)
                                 if not mapping:
                                     skipped += 1
                                     continue
-                                punch_type = "CHECK_IN" if rec["status_code"] == 0 else "CHECK_OUT"
-                                ts = f"{rec['date']}T{rec['time']}+05:30"
-                                p_ok, p_msg = punch_attendance(mapping["si_user_id"], punch_type, ts)
+
+                                # Read ALL today's records for this user from local DB
+                                all_today = sorted(
+                                    [r for r in db.get_attendance_by_date(today.isoformat(), device["id"])
+                                     if str(r["user_id"]) == bio_code],
+                                    key=lambda r: r["time"]
+                                )
+                                if not all_today:
+                                    continue
+
+                                first = all_today[0]
+                                last  = all_today[-1]
+
+                                def to_secs(t):
+                                    try:
+                                        h, m, s = t.split(":")
+                                        return int(h)*3600 + int(m)*60 + int(s)
+                                    except Exception:
+                                        return 0
+
+                                gap = to_secs(last["time"]) - to_secs(first["time"])
+
+                                # Always send CHECK_IN (first punch) — backend updates only if changed
+                                ts_in = f"{first['date']}T{first['time']}+05:30"
+                                p_ok, p_msg = punch_attendance(mapping["si_user_id"], "CHECK_IN", ts_in)
                                 if p_ok:
                                     punched += 1
-                                elif any(code in p_msg for code in _SKIP_CODES):
+                                elif any(c in p_msg for c in _SKIP_CODES):
                                     already += 1
                                 else:
                                     failed += 1
-                                    log(f"[Punch] {rec['name']} ({punch_type}): {p_msg}")
+                                    log(f"[Punch] {first['name']} CHECK_IN: {p_msg}")
+
+                                # Send CHECK_OUT only if last punch is >5 min after first
+                                if gap >= _MIN_GAP:
+                                    ts_out = f"{last['date']}T{last['time']}+05:30"
+                                    p_ok, p_msg = punch_attendance(mapping["si_user_id"], "CHECK_OUT", ts_out)
+                                    if p_ok:
+                                        punched += 1
+                                    elif any(c in p_msg for c in _SKIP_CODES):
+                                        already += 1
+                                    else:
+                                        failed += 1
+                                        log(f"[Punch] {last['name']} CHECK_OUT: {p_msg}")
+
                             parts = [f"{punched} sent"]
                             if already:
                                 parts.append(f"{already} already marked")
