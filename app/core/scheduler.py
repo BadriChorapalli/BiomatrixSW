@@ -139,15 +139,16 @@ def _run_poll(interval_minutes, log_callback):
                 elif not code_mappings:
                     log("⚠ Marking skipped  —  no staff mapped  (assign bio-codes in Staff tab)")
                 else:
-                    today_str        = today.isoformat()
-                    mapped_codes     = set(code_mappings.keys())
-                    marked_codes     = db.get_marked_today(today_str)
-                    all_today_records = db.get_attendance_by_date(today_str, device["id"])
+                    today_str          = today.isoformat()
+                    mapped_codes       = set(code_mappings.keys())
+                    marked_today_data  = db.get_marked_today(today_str)  # bio_code → check_out
+                    marked_codes       = set(marked_today_data.keys())
+                    all_today_records  = db.get_attendance_by_date(today_str, device["id"])
                     device_codes_today = set(str(r["user_id"]) for r in all_today_records)
 
-                    matched   = mapped_codes & device_codes_today
-                    no_punch  = mapped_codes - device_codes_today
-                    no_map    = device_codes_today - mapped_codes
+                    matched  = mapped_codes & device_codes_today
+                    no_punch = mapped_codes - device_codes_today
+                    no_map   = device_codes_today - mapped_codes
 
                     log(f"   Staff mapped : {len(mapped_codes)}  |  "
                         f"Punched today : {len(device_codes_today)}  |  "
@@ -159,14 +160,31 @@ def _run_poll(interval_minutes, log_callback):
                             f"codes: {', '.join(sorted(no_map)[:8])}"
                             + (" ..." if len(no_map) > 8 else ""))
 
-                    if sorted(mapped_codes) == sorted(marked_codes):
-                        log(f"✓ All {len(mapped_codes)} mapped staff already marked — nothing to do")
+                    # Staff not marked at all today
+                    missed = mapped_codes - marked_codes
+
+                    # Staff marked earlier without checkout but now have one
+                    needs_checkout = set()
+                    for bio_code in mapped_codes & marked_codes:
+                        if marked_today_data[bio_code] is None:  # previously no checkout
+                            user_recs = [r for r in all_today_records if str(r["user_id"]) == bio_code]
+                            if user_recs:
+                                derived = _derive_daily_records(user_recs)
+                                if derived and derived[0]["check_out"]:
+                                    needs_checkout.add(bio_code)
+
+                    to_process = missed | needs_checkout
+
+                    if not to_process:
+                        log(f"✓ All {len(mapped_codes)} mapped staff already marked with checkout — nothing to do")
                     else:
-                        missed = mapped_codes - marked_codes
-                        log(f"   Checking {len(missed)} staff not yet marked today...")
+                        if missed:
+                            log(f"   Checking {len(missed)} staff not yet marked today...")
+                        if needs_checkout:
+                            log(f"   Updating checkout for {len(needs_checkout)} staff...")
 
                         marked_count, no_punch_count, failed = 0, 0, 0
-                        for bio_code in missed:
+                        for bio_code in to_process:
                             mapping = code_mappings.get(bio_code)
                             if not mapping:
                                 continue
@@ -197,18 +215,19 @@ def _run_poll(interval_minutes, log_callback):
                             ci = check_in[11:16]
                             co = check_out[11:16] if check_out else "—"
                             if p_ok:
-                                db.save_marked_today(bio_code, today_str)
+                                db.save_marked_today(bio_code, today_str, check_out)
                                 marked_count += 1
-                                log(f"✓ Marked  {mapping['si_name']:<28}  IN {ci}  OUT {co}")
+                                label = "Marked" if bio_code in missed else "Updated"
+                                log(f"✓ {label}  {mapping['si_name']:<28}  IN {ci}  OUT {co}")
                             else:
                                 failed += 1
                                 log(f"✗ Failed  {mapping['si_name']:<28}  {p_msg}")
 
                         # Summary line
                         parts = []
-                        if marked_count:  parts.append(f"{marked_count} marked")
+                        if marked_count:   parts.append(f"{marked_count} marked/updated")
                         if no_punch_count: parts.append(f"{no_punch_count} no punch")
-                        if failed:        parts.append(f"{failed} failed")
+                        if failed:         parts.append(f"{failed} failed")
                         if parts:
                             log(f"   Summary : {' | '.join(parts)}")
 

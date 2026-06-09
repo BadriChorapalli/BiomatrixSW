@@ -90,6 +90,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS marked_today (
             bio_code TEXT,
             date TEXT,
+            check_out TEXT,
             marked_at TEXT DEFAULT (datetime('now')),
             PRIMARY KEY (bio_code, date)
         );
@@ -97,12 +98,13 @@ def init_db():
     conn.commit()
 
     # Migrate existing installations — add columns if absent
-    for col, definition in [
-        ("brand",     "TEXT DEFAULT 'eSSL'"),
-        ("force_udp", "INTEGER DEFAULT 0"),
+    for table, col, definition in [
+        ("devices",      "brand",     "TEXT DEFAULT 'eSSL'"),
+        ("devices",      "force_udp", "INTEGER DEFAULT 0"),
+        ("marked_today", "check_out", "TEXT"),
     ]:
         try:
-            conn.execute(f"ALTER TABLE devices ADD COLUMN {col} {definition}")
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {definition}")
             conn.commit()
         except Exception:
             pass  # column already exists
@@ -286,21 +288,21 @@ def get_all_code_mappings():
 
 
 def get_marked_today(date_str):
-    """Return set of bio_codes already successfully marked for the given date."""
+    """Return dict bio_code → check_out (None if not yet captured) for the given date."""
     conn = get_conn()
     rows = conn.execute(
-        "SELECT bio_code FROM marked_today WHERE date=?", (date_str,)
+        "SELECT bio_code, check_out FROM marked_today WHERE date=?", (date_str,)
     ).fetchall()
     conn.close()
-    return {r[0] for r in rows}
+    return {r[0]: r[1] for r in rows}
 
 
-def save_marked_today(bio_code, date_str):
-    """Record that bio_code was successfully marked for date_str."""
+def save_marked_today(bio_code, date_str, check_out=None):
+    """Upsert marking record — updates check_out when it becomes available."""
     conn = get_conn()
     conn.execute(
-        "INSERT OR IGNORE INTO marked_today (bio_code, date) VALUES (?, ?)",
-        (str(bio_code), date_str)
+        "INSERT OR REPLACE INTO marked_today (bio_code, date, check_out) VALUES (?, ?, ?)",
+        (str(bio_code), date_str, check_out)
     )
     conn.commit()
     conn.close()
