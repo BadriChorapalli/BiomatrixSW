@@ -72,7 +72,7 @@ def _run_poll(interval_minutes, log_callback):
     global _poll_running
     from .device import pull_attendance
     from .database import save_attendance
-    from .api_client import punch_attendance, is_device_approved
+    from .api_client import mark_attendance, is_device_approved, _derive_daily_records
 
     def log(msg):
         if log_callback:
@@ -102,11 +102,9 @@ def _run_poll(interval_minutes, log_callback):
                         log(f"[AutoPull] {device['name']}: {len(result)} new records")
 
                         if approved:
-                            _SKIP_CODES = {"DUPLICATE_PUNCH", "ALREADY_CHECKED_IN", "TOO_SOON"}
-                            _MIN_GAP = 5 * 60  # seconds
-                            punched, skipped, already, failed = 0, 0, 0, 0
+                            marked, skipped, failed = 0, 0, 0
 
-                            # Collect affected user_ids from new records
+                            # Affected users in this pull cycle
                             affected = set(str(r["user_id"]) for r in result)
 
                             for bio_code in affected:
@@ -115,58 +113,42 @@ def _run_poll(interval_minutes, log_callback):
                                     skipped += 1
                                     continue
 
-                                # Read ALL today's records for this user from local DB
-                                all_today = sorted(
-                                    [r for r in db.get_attendance_by_date(today.isoformat(), device["id"])
-                                     if str(r["user_id"]) == bio_code],
-                                    key=lambda r: r["time"]
-                                )
+                                # Read ALL today's punches for this user from local DB
+                                all_today = [
+                                    r for r in db.get_attendance_by_date(today.isoformat(), device["id"])
+                                    if str(r["user_id"]) == bio_code
+                                ]
                                 if not all_today:
                                     continue
 
-                                first = all_today[0]
-                                last  = all_today[-1]
+                                # Use the same edge-case logic as batch upload:
+                                # collapses double-taps, derives check_in/check_out correctly
+                                derived = _derive_daily_records(all_today)
+                                if not derived:
+                                    continue
 
-                                def to_secs(t):
-                                    try:
-                                        h, m, s = t.split(":")
-                                        return int(h)*3600 + int(m)*60 + int(s)
-                                    except Exception:
-                                        return 0
+                                rec = derived[0]
+                                check_in  = rec["check_in"]
+                                check_out = rec["check_out"]  # None if only one cluster
 
-                                gap = to_secs(last["time"]) - to_secs(first["time"])
-
-                                # Always send CHECK_IN (first punch) — backend updates only if changed
-                                ts_in = f"{first['date']}T{first['time']}+05:30"
-                                p_ok, p_msg = punch_attendance(mapping["si_user_id"], "CHECK_IN", ts_in)
+                                p_ok, p_msg = mark_attendance(
+                                    mapping["si_user_id"],
+                                    rec["date"],
+                                    check_in,
+                                    check_out,
+                                )
                                 if p_ok:
-                                    punched += 1
-                                elif any(c in p_msg for c in _SKIP_CODES):
-                                    already += 1
+                                    marked += 1
+                                    co = check_out[11:16] if check_out else "—"
+                                    log(f"[Mark] {rec['name']}: in={check_in[11:16]} out={co}")
                                 else:
                                     failed += 1
-                                    log(f"[Punch] {first['name']} CHECK_IN: {p_msg}")
+                                    log(f"[Mark] {rec['name']}: {p_msg}")
 
-                                # Send CHECK_OUT only if last punch is >5 min after first
-                                if gap >= _MIN_GAP:
-                                    ts_out = f"{last['date']}T{last['time']}+05:30"
-                                    p_ok, p_msg = punch_attendance(mapping["si_user_id"], "CHECK_OUT", ts_out)
-                                    if p_ok:
-                                        punched += 1
-                                    elif any(c in p_msg for c in _SKIP_CODES):
-                                        already += 1
-                                    else:
-                                        failed += 1
-                                        log(f"[Punch] {last['name']} CHECK_OUT: {p_msg}")
-
-                            parts = [f"{punched} sent"]
-                            if already:
-                                parts.append(f"{already} already marked")
-                            if skipped:
-                                parts.append(f"{skipped} unmapped")
-                            if failed:
-                                parts.append(f"{failed} failed")
-                            log(f"[Punch] {device['name']}: {', '.join(parts)}")
+                            parts = [f"{marked} marked"]
+                            if skipped: parts.append(f"{skipped} unmapped")
+                            if failed:  parts.append(f"{failed} failed")
+                            log(f"[Mark] {device['name']}: {', '.join(parts)}")
                     else:
                         log(f"[AutoPull] {device['name']}: no new records")
 

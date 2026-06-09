@@ -315,13 +315,13 @@ def sync_device_users(users, school_id=None):
         return False, str(e), 0
 
 
-# ── Real-time Punch ──────────────────────────────────────────────────────────
+# ── Real-time Mark ───────────────────────────────────────────────────────────
 
-def punch_attendance(si_user_id, punch_type, device_timestamp):
-    """POST /staff-attendance/mark/ — mark real-time check-in or check-out.
+def mark_attendance(si_user_id, date_str, check_in, check_out=None):
+    """POST /staff-attendance/mark/ — single call with derived check_in/check_out.
 
-    punch_type      : "CHECK_IN" or "CHECK_OUT"
-    device_timestamp: ISO 8601 string e.g. "2026-06-08T08:30:00+05:30"
+    check_in : ISO 8601 string e.g. "2026-06-09T07:42:00+05:30"
+    check_out: ISO 8601 string or None (explicitly sent as null to clear stale value)
     Returns (ok: bool, message: str)
     """
     if not is_device_approved():
@@ -329,18 +329,15 @@ def punch_attendance(si_user_id, punch_type, device_timestamp):
     school_id = db.get_setting("si_school_id", "")
     if not school_id:
         return False, "School ID not set"
-    date_str = device_timestamp[:10]
     payload = {
         "user_id": int(si_user_id),
         "school_id": int(school_id),
         "date": date_str,
         "status": "present",
         "source": "biometric_upload",
+        "check_in": check_in,
+        "check_out": check_out,  # None clears stale check_out on server
     }
-    if punch_type == "CHECK_IN":
-        payload["check_in"] = device_timestamp
-    else:
-        payload["check_out"] = device_timestamp
     try:
         r = requests.post(
             f"{BASE_URL}/staff-attendance/mark/",
