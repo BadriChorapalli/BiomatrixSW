@@ -247,6 +247,13 @@ def save_poll_slots(slots):
     set_setting("poll_slots", json.dumps(slots))
 
 
+def clear_code_mappings():
+    conn = get_conn()
+    conn.execute("DELETE FROM code_mappings")
+    conn.commit()
+    conn.close()
+
+
 def save_code_mappings(mappings):
     """Upsert bio_code → SI user mappings. mappings = [{bio_code, si_user_id, si_name}]."""
     conn = get_conn()

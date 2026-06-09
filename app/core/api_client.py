@@ -281,6 +281,8 @@ def sync_code_mappings(school_id=None):
         for s in staff
         if s.get("is_mapped") and s.get("biometric_code")
     ]
+    # Full replace — clear all existing mappings first so stale entries don't persist
+    db.clear_code_mappings()
     db.save_code_mappings(mappings)
     return True, len(mappings), len(staff) - len(mappings)
 
