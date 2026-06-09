@@ -486,41 +486,30 @@ def upload_attendance(records, device_name):
     if not daily_records:
         return True, "No records to upload.", 0
 
-    # Build payload for the direct push endpoint.
-    # bio_code = device user_id (EmpCode); must match StaffBiometricCode on the server.
-    push_records = [
-        {
-            "bio_code": str(rec["user_id"]),
-            "date": rec["date"],
-            "check_in": rec["check_in"].split("T")[1][:5] if rec.get("check_in") else None,
-            "check_out": rec["check_out"].split("T")[1][:5] if rec.get("check_out") else None,
-        }
-        for rec in daily_records
-    ]
+    code_mappings = db.get_all_code_mappings()  # bio_code → {si_user_id, si_name}
 
-    try:
-        r = requests.post(
-            f"{BASE_URL}/biometric/upload/direct/",
-            json={"school_id": int(school_id), "records": push_records},
-            headers=_headers(),
-            timeout=30,
+    marked, unmatched, failed = 0, 0, 0
+    for rec in daily_records:
+        mapping = code_mappings.get(str(rec["user_id"]))
+        if not mapping:
+            unmatched += 1
+            continue
+        ok, msg = mark_attendance(
+            mapping["si_user_id"],
+            rec["date"],
+            rec["check_in"],
+            rec["check_out"],
         )
-        if r.status_code == 200:
-            data = r.json().get("detail", {})
-            created = data.get("created", 0)
-            updated = data.get("updated", 0)
-            unmatched = data.get("unmatched", 0)
-            total = len(push_records)
-            parts = []
-            if created:
-                parts.append(f"{created} new")
-            if updated:
-                parts.append(f"{updated} updated")
-            if unmatched:
-                parts.append(f"{unmatched} unmatched (assign codes in Mapping tab)")
-            msg = f"Uploaded {created + updated}/{total} records. " + (", ".join(parts) if parts else "")
-            return True, msg.strip(), created + updated
-        data = r.json()
-        return False, f"Upload failed ({r.status_code}): {data.get('detail', r.text[:200])}", 0
-    except Exception as e:
-        return False, f"Upload error: {str(e)}", 0
+        if ok:
+            marked += 1
+        else:
+            failed += 1
+
+    total = len(daily_records)
+    parts = [f"{marked} marked"]
+    if unmatched:
+        parts.append(f"{unmatched} unmapped (assign codes in Staff tab)")
+    if failed:
+        parts.append(f"{failed} failed")
+    msg = f"Uploaded {marked}/{total} records. " + ", ".join(parts)
+    return True, msg.strip(), marked
