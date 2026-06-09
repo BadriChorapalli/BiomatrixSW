@@ -91,45 +91,75 @@ class DashboardTab(ctk.CTkFrame):
             )
 
     def _refresh_attendance_status(self):
-        from datetime import date
-        from collections import defaultdict
+        for w in self.attendance_frame.winfo_children():
+            w.destroy()
+        ctk.CTkLabel(self.attendance_frame, text="Fetching from School Insights…",
+                     text_color="#888", font=ctk.CTkFont(size=11)).pack(anchor="w", padx=8, pady=6)
+        threading.Thread(target=self._fetch_and_render_attendance, daemon=True).start()
 
+    def _fetch_and_render_attendance(self):
+        from app.core.api_client import get_staff_list, is_device_approved
+
+        mappings = db.get_all_code_mappings()
+        if not mappings:
+            self.after(0, lambda: self._render_attendance(None, mappings))
+            return
+
+        if not is_device_approved():
+            self.after(0, lambda: self._render_attendance(None, mappings))
+            return
+
+        ok, staff_list = get_staff_list()
+        if not ok:
+            self.after(0, lambda: self._render_attendance(None, mappings))
+            return
+
+        # Build si_user_id → attendance info map
+        si_map = {s["user_id"]: s for s in staff_list}
+        self.after(0, lambda: self._render_attendance(si_map, mappings))
+
+    def _render_attendance(self, si_map, mappings):
         for w in self.attendance_frame.winfo_children():
             w.destroy()
 
-        mappings = db.get_all_code_mappings()
         if not mappings:
             ctk.CTkLabel(self.attendance_frame, text="No mapped staff yet — assign codes in Staff tab.",
                          text_color="#666", font=ctk.CTkFont(size=11)).pack(anchor="w", padx=8, pady=6)
             return
 
-        today = date.today().isoformat()
-        all_records = db.get_attendance_by_date(today)
-        user_records = defaultdict(list)
-        for r in all_records:
-            user_records[str(r["user_id"])].append(r)
+        if si_map is None:
+            ctk.CTkLabel(self.attendance_frame, text="Could not fetch from School Insights.",
+                         text_color="#ef5350", font=ctk.CTkFont(size=11)).pack(anchor="w", padx=8, pady=6)
+            return
 
         # Header
         hdr = ctk.CTkFrame(self.attendance_frame, fg_color="transparent")
         hdr.pack(fill="x", padx=4)
-        for text, w in [("", 18), ("Name", 180), ("Check-In", 80), ("Check-Out", 80), ("Punches", 60)]:
+        for text, w in [("", 18), ("Name", 180), ("Status", 80), ("Check-In", 80), ("Check-Out", 80)]:
             ctk.CTkLabel(hdr, text=text, width=w, anchor="w",
                          font=ctk.CTkFont(size=11), text_color="#888").pack(side="left")
 
         for bio_code, m in sorted(mappings.items(), key=lambda x: x[1]["si_name"]):
-            punches = sorted(user_records.get(bio_code, []), key=lambda r: r["time"])
-            has_data = bool(punches)
-            check_in  = punches[0]["time"][:5]  if punches else "—"
-            check_out = punches[-1]["time"][:5] if len(punches) > 1 else "—"
-            dot_color = "#4caf50" if has_data else "#ef5350"
+            info = si_map.get(m["si_user_id"], {})
+            status    = info.get("status", "unmarked")
+            check_in  = info.get("check_in")  or "—"
+            check_out = info.get("check_out") or "—"
+
+            # Format: "2026-06-09T07:55:30" → "07:55"
+            if check_in  != "—": check_in  = check_in[11:16]
+            if check_out != "—": check_out = check_out[11:16]
+
+            dot_color   = "#4caf50" if status == "present" else "#ef5350"
+            status_text = status.capitalize()
 
             row = ctk.CTkFrame(self.attendance_frame, fg_color="#1e1e2e", corner_radius=6)
             row.pack(fill="x", pady=2, padx=2)
             ctk.CTkLabel(row, text="●", text_color=dot_color, width=18).pack(side="left", padx=(8, 0))
             ctk.CTkLabel(row, text=m["si_name"], width=180, anchor="w").pack(side="left", padx=4)
+            ctk.CTkLabel(row, text=status_text, width=80, anchor="w",
+                         text_color=dot_color).pack(side="left")
             ctk.CTkLabel(row, text=check_in,  width=80, anchor="w", text_color="#a5d6a7").pack(side="left")
             ctk.CTkLabel(row, text=check_out, width=80, anchor="w", text_color="#90caf9").pack(side="left")
-            ctk.CTkLabel(row, text=str(len(punches)), width=60, anchor="w", text_color="#888").pack(side="left")
 
     def refresh(self):
         for w in self.device_list_frame.winfo_children():
