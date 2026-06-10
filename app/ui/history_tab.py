@@ -14,6 +14,7 @@ class HistoryTab(ctk.CTkFrame):
         self.pack(fill="both", expand=True)
         self._build()
         self._load_dates()
+        self._schedule_auto_refresh()
 
     def _build(self):
         # ── Controls row ──────────────────────────────────────────────────────
@@ -35,10 +36,11 @@ class HistoryTab(ctk.CTkFrame):
                       command=self._pull_from_device).pack(side="left", padx=(0, 12))
 
         for label, delta in [("Today", 0), ("Yesterday", -1), ("2 Days Ago", -2)]:
-            d = str(date.today() + timedelta(days=delta))
             ctk.CTkButton(ctrl, text=label, width=90, height=34,
                           fg_color="#37474f", hover_color="#263238",
-                          command=lambda x=d: self._quick_load(x)).pack(side="left", padx=2)
+                          command=lambda d=delta: self._quick_load(
+                              str(date.today() + timedelta(days=d))
+                          )).pack(side="left", padx=2)
 
         # ── View toggle ───────────────────────────────────────────────────────
         toggle = ctk.CTkFrame(self, fg_color="transparent")
@@ -76,6 +78,17 @@ class HistoryTab(ctk.CTkFrame):
 
         self._records = []
         self._build_header_summary()
+
+    def _schedule_auto_refresh(self):
+        """Reload every 30 s when the displayed date is today."""
+        if self.date_var.get().strip() == str(date.today()):
+            self._load_from_db()
+        self.after(30000, self._schedule_auto_refresh)
+
+    def refresh_if_today(self):
+        """Called externally (e.g. by poll thread) to refresh when viewing today."""
+        if self.date_var.get().strip() == str(date.today()):
+            self._load_from_db()
 
     # ── Header helpers ────────────────────────────────────────────────────────
 

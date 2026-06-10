@@ -63,6 +63,8 @@ class MainWindow(ctk.CTk):
 
     def append_log(self, message):
         self.after(0, self.logs_tab.append, message)
+        if "Pulled" in message or "Marked" in message or "marked" in message:
+            self.after(0, self.history.refresh_if_today)
 
     def on_closing(self):
         scheduler.stop()
