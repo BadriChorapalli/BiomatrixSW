@@ -733,8 +733,13 @@ def verify_today_attendance(all_punches, target_date=None, log_callback=None):
         elif old_check_out and not new_check_out:
             action = "check_out_cleared"
             should_mark = True
-        elif _minutes_differ(old_check_in, new_check_in) or _minutes_differ(old_check_out, new_check_out):
+        elif _minutes_differ(old_check_in, new_check_in):
             action = "check_in_corrected"
+            should_mark = True
+        elif _minutes_differ(old_check_out, new_check_out):
+            # A shifted check-out (not added/cleared) is its own action so the
+            # verify report does not mislabel it as a check-in correction.
+            action = "check_out_corrected"
             should_mark = True
 
         if not should_mark:

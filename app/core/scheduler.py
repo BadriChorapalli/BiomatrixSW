@@ -3,6 +3,7 @@ import threading
 import time
 import datetime
 import queue
+import collections
 from datetime import date
 from . import database as db
 from .sync import sync_all_devices, sync_device_users_all, sync_code_mappings_job
@@ -58,7 +59,23 @@ _poll_running = False
 _command_queue = queue.Queue()
 _sse_thread = None
 _sse_stop_event = None
+# De-dup ledger so a command delivered by both SSE and the polling fallback runs
+# once. Bounded so a process that stays up for weeks does not leak memory — old
+# ids are safe to forget because the server never re-delivers a command that has
+# left 'pending'.
 _processed_command_ids = set()
+_processed_command_order = collections.deque()
+_PROCESSED_COMMAND_CAP = 2000
+
+
+def _remember_command_id(command_id):
+    """Record an executed command id, evicting the oldest beyond the cap."""
+    if not command_id or command_id in _processed_command_ids:
+        return
+    _processed_command_ids.add(command_id)
+    _processed_command_order.append(command_id)
+    while len(_processed_command_order) > _PROCESSED_COMMAND_CAP:
+        _processed_command_ids.discard(_processed_command_order.popleft())
 
 
 def _current_interval():
@@ -369,8 +386,7 @@ def _drain_command_queue(log_callback, last_pull):
         command_id = _command_id(command)
         if command_id in _processed_command_ids:
             continue
-        if command_id:
-            _processed_command_ids.add(command_id)
+        _remember_command_id(command_id)
         _execute_command(command, log_callback, last_pull)
         processed += 1
     return processed
@@ -382,8 +398,7 @@ def _poll_pending_commands(log_callback, last_pull):
         command_id = _command_id(command)
         if command_id in _processed_command_ids:
             continue
-        if command_id:
-            _processed_command_ids.add(command_id)
+        _remember_command_id(command_id)
         _execute_command(command, log_callback, last_pull)
 
 
