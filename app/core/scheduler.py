@@ -204,7 +204,8 @@ def _execute_sync_now(log_callback, last_pull):
         since = last_pull.get(device["id"])
         ok, pulled = pull_attendance(
             device["ip"], device["port"], device["password"], today,
-            since=since, force_udp=bool(device.get("force_udp", 0))
+            since=since, force_udp=bool(device.get("force_udp", 0)),
+            brand=device.get("brand", "essl"),
         )
         if not ok:
             _log(log_callback, f"[Command] sync_now: {device['name']} offline: {pulled}")
@@ -233,7 +234,8 @@ def _execute_reconcile(log_callback):
     for device in _enabled_devices():
         ok, users_or_err = get_device_users(
             device["ip"], device["port"], device["password"],
-            force_udp=bool(device.get("force_udp", 0))
+            force_udp=bool(device.get("force_udp", 0)),
+            brand=device.get("brand", "essl"),
         )
         if ok:
             for user in users_or_err:
@@ -268,7 +270,8 @@ def _execute_verify_today(log_callback):
     for device in _enabled_devices():
         ok, pulled = pull_attendance(
             device["ip"], device["port"], device["password"], today,
-            since=None, force_udp=bool(device.get("force_udp", 0))
+            since=None, force_udp=bool(device.get("force_udp", 0)),
+            brand=device.get("brand", "essl"),
         )
         if ok:
             if pulled:
@@ -300,7 +303,8 @@ def _execute_get_status(log_callback):
     for device in _enabled_devices():
         reachable, msg = test_connection(
             device["ip"], device["port"], device["password"],
-            force_udp=bool(device.get("force_udp", 0))
+            force_udp=bool(device.get("force_udp", 0)),
+            brand=device.get("brand", "essl"),
         )
         records_today = _count_records_today(today_str, device["id"])
         total_records += records_today
@@ -484,7 +488,8 @@ def _run_poll(interval_minutes, log_callback):
                 since = last_pull.get(device["id"])
                 ok, result = pull_attendance(
                     device["ip"], device["port"], device["password"], today,
-                    since=since, force_udp=bool(device.get("force_udp", 0))
+                    since=since, force_udp=bool(device.get("force_udp", 0)),
+                    brand=device.get("brand", "essl"),
                 )
 
                 if not ok:

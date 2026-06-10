@@ -289,7 +289,8 @@ class HistoryTab(ctk.CTkFrame):
         def do_pull():
             for device in devices:
                 ok, result = pull_attendance(device["ip"], device["port"],
-                                             device["password"], target)
+                                             device["password"], target,
+                                             brand=device.get("brand", "essl"))
                 if ok:
                     save_attendance(device["id"], device["name"], result)
             self.after(0, self._load_from_db)

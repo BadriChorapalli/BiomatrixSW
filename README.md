@@ -59,12 +59,27 @@ Change the password immediately from the **Settings** tab after login.
 3. Fill in:
    - **Device Name** — anything you like, e.g. "Main Gate"
    - **IP Address** — the IP of the biometric machine on your LAN (e.g. `192.168.100.9`)
-   - **Port** — leave as `4370` (default for all ZKTeco/eSSL devices)
+   - **Device Brand** — select your brand from the list below. The Port field auto-fills when you choose.
+   - **Port** — filled automatically based on brand (see table below). Change only if your device uses a non-standard port.
    - **Password** — `0` unless your device has a specific password set
-   - **Device Brand** — select your brand (eSSL, ZKTeco, Realtime, etc.)
-   - **Connection Protocol** — leave as **TCP** for most devices; choose **UDP** only for very old models
+   - **Connection Protocol** — leave as **TCP** for most devices; choose **UDP** only for very old eSSL/ZKTeco models
 4. Click **Test Connection** to verify the device is reachable.
 5. Click **Save Device**.
+
+**Supported brands and default ports:**
+
+| Brand | Default Port | Notes |
+|---|---|---|
+| eSSL | 4370 | ZKTeco-compatible devices |
+| ZKTeco | 4370 | |
+| Realtime | 4370 | ZKTeco-compatible |
+| FingerTec | 4370 | ZKTeco-compatible |
+| Anviz | 4370 | ZKTeco-compatible |
+| Matrix | 4370 | ZKTeco-compatible |
+| **Morx** | **5005** | Morx BioFace-MSD1K — port auto-fills when you select this brand |
+| Other | 4370 | |
+
+> **Morx BioFace-MSD1K:** When you select **Morx** as the brand, the Port field automatically changes to `5005`. This device uses a different communication protocol (SBXPC) and must use port 5005. Staff names on Morx devices are not stored in the hardware — they will appear in the app once you complete Step 4 (Map staff to biometric codes).
 
 ### Step 3 — Register with School Insights
 1. Go to the **Registration** tab.
@@ -110,11 +125,12 @@ You generally don't need to do anything. Just make sure the app is open on the P
 
 | Problem | Fix |
 |---|---|
-| "Failed to connect" on device test | Check the IP address and make sure the PC and device are on the same network. Try pinging the device IP. |
+| "Failed to connect" on device test | Check the IP address and make sure the PC and device are on the same network. Try pinging the device IP. For Morx devices, confirm port is `5005`. |
 | Staff showing as Absent even after punching | Check if the staff member is mapped (Staff tab). Also check Logs for any "failed" mark messages. |
 | App not pulling automatically | Make sure Auto Pull is enabled in Settings. Check the Logs tab for errors. |
 | Registration tab shows a form after already being approved | This shouldn't happen — the form hides automatically on approval. If it does, check your internet connection and click "Check Status". |
 | Forgot password | Delete the file `biomatrix.db` from the app data folder and restart. This resets everything (you'll need to redo setup). |
+| Names showing blank in attendance records (Morx devices) | Morx hardware does not store staff names. Names come from the staff mapping in School Insights. Go to the **Staff** tab → **Sync from School Insights**, then assign biometric codes to each staff member. |
 
 ---
 

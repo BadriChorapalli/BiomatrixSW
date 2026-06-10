@@ -2,7 +2,7 @@
 
 ## What this software does
 BiomatrixSync is a cross-platform desktop application (Mac + Windows) built for **BellWeather** that:
-1. Connects to **eSSL / ZKTeco biometric attendance devices** over LAN (port 4370)
+1. Connects to **eSSL / ZKTeco** (ZK protocol, TCP port 4370) **or Morx BioFace-MSD1K** (SBXPC protocol, TCP port 5005) biometric attendance devices over LAN
 2. Pulls daily attendance records from the device
 3. Saves records as CSV to the `exports/` folder and into SQLite database
 4. Registers with **School Insights** via device approval flow and uploads attendance
@@ -15,27 +15,42 @@ BiomatrixSync is a cross-platform desktop application (Mac + Windows) built for 
 - Devices are on a **local LAN** — no internet required for device communication
 - School Insights upload requires internet
 
-## Hardware
-- **Device model:** eSSL x2008
-- **Protocol:** ZKTeco SDK over TCP port 4370
-- **Fingerprint algorithm:** ZKFinger VX10.0
-- **Platform:** ZLM60_TFT
-- **Firmware:** Ver 8.0.4.2-20210223
-- **Test device IP:** 192.168.100.9 (LAN: 192.168.100.x subnet)
-- **Serial:** CGKK220861010
-- **Enrolled users:** 177 staff | **Total records:** 53,973+
+## Supported Hardware
+
+### eSSL / ZKTeco (and compatible: Realtime, FingerTec, Anviz, Matrix)
+- **Example model:** eSSL x2008
+- **Protocol:** ZKTeco SDK (ZK protocol) over **TCP port 4370**
+- **Library:** `pyzk 0.9` — Python wrapper for the ZKTeco SDK
+- **UDP mode:** `force_udp=True` for older device models that don't support TCP
+- **Authentication:** integer password (default 0)
+- **Data:** User name stored on device; attendance records have full timestamps + status codes
+- **Test device:** 192.168.100.9:4370 (LAN: 192.168.100.x subnet)
+- **Fingerprint algorithm:** ZKFinger VX10.0 | **Serial:** CGKK220861010
 - **DHCP:** ON — IP may change; always configure per-device
+
+### Morx BioFace-MSD1K
+- **Protocol:** SBXPC (SmackBio proprietary) over **TCP port 5005**
+- **Library:** None — pure Python stdlib (`socket` + `struct`). No DLL required.
+- **Machine number:** Always 0 in every SBXPC packet (hardware requirement)
+- **Authentication:** two-packet handshake with password embedded in packet params
+- **Data:** User records are 8 bytes each — **no name field in hardware**. Names come from `code_mappings` table (synced from School Insights).
+- **Log read:** Full log (all records ever) returned each pull. Filtered client-side by date/since. No incremental protocol.
+- **Commands used:** Connect `79 19 52 00`, EnableDevice(1)/unlock `79 19 0c 01`, ReadAllUserID `79 19 12 01`, ReadAllGLogData `79 19 07 01`
+- **EnableDevice lock:** Do NOT send EnableDevice(0) (lock) before reads. Send EnableDevice(1) (unlock) after each read via `_unlock()` helper to prevent device staying locked until TCP timeout.
+- **Test device:** 192.168.13.104:5005 (BellWether main gate)
 
 ## Tech stack
 | Layer | Tech |
 |---|---|
-| Language | Python 3.12 |
+| Language | Python 3.12 (Mac) / Python 3.14 (Windows build machine) |
 | UI | CustomTkinter (dark theme) |
-| Device comms | pyzk 0.9 |
+| eSSL/ZKTeco device comms | pyzk 0.9 |
+| Morx device comms | stdlib `socket` + `struct` — `app/core/morx_device.py` |
+| Brand routing | `device.py` dispatches on `brand` field: `_is_morx()` helper |
 | Scheduling | schedule library + threading |
 | Storage | SQLite (biomatrix.db) — file-based, no server needed |
 | API upload | requests |
-| Packaging | PyInstaller → `.app` (Mac) or `.exe` (Windows) |
+| Packaging | PyInstaller 6.20.0 → `.app` (Mac) or `.exe` (Windows) |
 
 ## Project structure
 ```
@@ -51,7 +66,8 @@ BiomatrixSW/
 ├── app/
 │   ├── core/
 │   │   ├── database.py        # All SQLite operations
-│   │   ├── device.py          # ZKTeco connect, pull_attendance()
+│   │   ├── device.py          # Brand router: dispatches to pyzk (eSSL) or morx_device (Morx)
+│   │   ├── morx_device.py     # Morx BioFace-MSD1K — SBXPC protocol, pure Python
 │   │   ├── api_client.py      # Full School Insights API integration
 │   │   ├── sync.py            # Orchestrates pull → CSV → DB → upload
 │   │   └── scheduler.py       # Daily background scheduler thread
@@ -60,17 +76,20 @@ BiomatrixSW/
 │       ├── main_window.py     # CTk root window — tabs: Dashboard, History, Devices, Registration, Settings, Logs
 │       ├── dashboard_tab.py   # Device status, manual sync buttons
 │       ├── history_tab.py     # Attendance history viewer by date
-│       ├── devices_tab.py     # Add/edit/delete device configs
+│       ├── devices_tab.py     # Add/edit/delete device configs (brand selector auto-sets port)
 │       ├── registration_tab.py # School Insights device registration & approval flow
 │       ├── settings_tab.py    # Sync time, change password
 │       └── logs_tab.py        # Live log textbox + sync history viewer
 ```
 
 ## Database schema (SQLite — biomatrix.db)
-- **devices** — id, name, ip, port, password, enabled
+- **devices** — id, name, ip, port, password, enabled, `brand TEXT DEFAULT 'eSSL'`, `force_udp INTEGER DEFAULT 0`
+  - `brand` values: eSSL, ZKTeco, Realtime, FingerTec, Anviz, Matrix, **Morx**, Other
+  - `force_udp` only applies to eSSL/ZKTeco brands (ignored for Morx)
 - **settings** — key/value store (see all keys below)
 - **attendance** — device_id, device_name, user_id, name, date, time, status (UNIQUE per device+user+datetime)
 - **sync_logs** — device_id, status, records_pulled, records_uploaded, message, synced_at
+- **code_mappings** — bio_code (device user_id as TEXT) → si_user_id, si_name. Used to fill in names for Morx records since the device has no name storage.
 
 ### Settings keys
 | Key | Purpose |
@@ -158,6 +177,7 @@ Authorization: Bearer <si_access_token>  (only after approval)
 - Most morning punches are CHECK OUT (device placed at exit gate)
 - User ID 999 = Admin/test user
 - Biometric `user_id` maps directly to School Insights `user_id`
+- **Morx devices:** all records returned as "CHECK IN" status — direction is derived from timing clusters by `_derive_daily_records()` in `api_client.py`, same as eSSL
 
 ## Key behaviors
 - Login screen shown before main window on every launch
@@ -167,6 +187,7 @@ Authorization: Bearer <si_access_token>  (only after approval)
 - Registration tab: select org → school → submit → auto-poll for approval
 - History tab: browse attendance by date, pull from device for any date, export CSV
 - Multiple devices per installation supported
+- Selecting "Morx" in Devices tab auto-sets port to 5005; switching away auto-restores 4370
 
 ## Related BellWeather repos
 - `school-insights/` — Django backend (staff_attendance app handles punch API)
@@ -196,6 +217,9 @@ The same `build.spec` handles both platforms automatically — detects OS at bui
 ## Known issues / fixes applied
 - **macOS network sandbox:** `entitlements.plist` must be re-applied after every PyInstaller build via `codesign`
 - **Missing `jaraco` module:** Added as hidden import in `build.spec` to fix PyInstaller crash on launch
+- **Python 3.14 (Windows build machine):** PyInstaller 6.6.0 does not support Python 3.14 — use 6.20.0. Pillow 10.3.0 also incompatible — use 12.2.0.
+- **Morx SBXPC DLL (SBXPCDLL64.dll):** Original DLL has two fatal bugs (rejects mach=0, corrupts checksum). `morx_device.py` bypasses the DLL entirely with a pure Python reimplementation of the wire protocol.
+- **Morx device locking:** Sending `EnableDevice(0)` before reads locks the device. The unlock command (`EnableDevice(1)`) must be sent after reads via a fresh TCP connection using `_unlock()`. Do NOT send the lock command at all.
 
 ## Pending / TODO
 - [ ] Verify biometric device `user_id` matches School Insights `user_id` (mapping may be needed)
@@ -203,3 +227,4 @@ The same `build.spec` handles both platforms automatically — detects OS at bui
 - [ ] Test on Windows machine
 - [ ] Add missed-sync recovery (re-sync previous day if machine was off)
 - [ ] Token refresh logic when access_token expires (30-day expiry)
+- [ ] Populate `code_mappings` table for Morx installation so names appear in attendance records
