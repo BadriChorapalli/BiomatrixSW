@@ -1,5 +1,10 @@
 from zk import ZK
 from datetime import date, datetime
+from . import morx_device as _morx
+
+
+def _is_morx(brand):
+    return str(brand).strip().lower() == "morx"
 
 
 def _zk(ip, port, password, force_udp=False):
@@ -8,8 +13,25 @@ def _zk(ip, port, password, force_udp=False):
                force_udp=bool(force_udp), ommit_ping=False)
 
 
-def get_device_users(ip, port, password, force_udp=False):
+def _enrich_names(records, key="user_id"):
+    """Fill in name from local code_mappings for records where name is empty."""
+    from . import database as db
+    mappings = db.get_all_code_mappings()
+    for r in records:
+        if not r.get("name"):
+            m = mappings.get(str(r.get(key, "")))
+            if m:
+                r["name"] = m.get("si_name", "")
+    return records
+
+
+def get_device_users(ip, port, password, force_udp=False, brand="essl"):
     """Pull all enrolled users from the biometric device."""
+    if _is_morx(brand):
+        ok, result = _morx.get_device_users(ip, port, password)
+        if ok:
+            _enrich_names(result)
+        return ok, result
     zk = _zk(ip, port, password, force_udp)
     conn = None
     try:
@@ -35,7 +57,9 @@ def get_device_users(ip, port, password, force_udp=False):
                 pass
 
 
-def test_connection(ip, port, password, force_udp=False):
+def test_connection(ip, port, password, force_udp=False, brand="essl"):
+    if _is_morx(brand):
+        return _morx.test_connection(ip, port, password)
     zk = _zk(ip, port, password, force_udp)
     conn = None
     try:
@@ -54,12 +78,17 @@ def test_connection(ip, port, password, force_udp=False):
                 pass
 
 
-def pull_attendance(ip, port, password, target_date=None, since=None, force_udp=False):
+def pull_attendance(ip, port, password, target_date=None, since=None, force_udp=False, brand="essl"):
     """Pull attendance records from device.
 
     since     : datetime — if given, only return records with timestamp > since.
     force_udp : bool     — True for older ZKTeco-compatible devices that need UDP.
     """
+    if _is_morx(brand):
+        ok, result = _morx.pull_attendance(ip, port, password, target_date=target_date, since=since)
+        if ok:
+            _enrich_names(result)
+        return ok, result
     if target_date is None:
         target_date = date.today()
 

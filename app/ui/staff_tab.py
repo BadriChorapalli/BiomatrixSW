@@ -152,7 +152,8 @@ class StaffTab(ctk.CTkFrame):
         def do():
             all_users = {}
             for device in devices:
-                ok, result = get_device_users(device["ip"], device["port"], device["password"])
+                ok, result = get_device_users(device["ip"], device["port"], device["password"],
+                                             brand=device.get("brand", "essl"))
                 if ok:
                     for u in result:
                         all_users[u["user_id"]] = u  # deduplicate by device user_id

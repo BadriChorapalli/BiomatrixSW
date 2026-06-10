@@ -30,7 +30,8 @@ def sync_device(device, target_date=None, log_callback=None):
     log(f"[{device['name']}] Connecting to {device['ip']}:{device['port']}...")
     ok, result = pull_attendance(
         device["ip"], device["port"], device["password"], target_date,
-        force_udp=bool(device.get("force_udp", 0))
+        force_udp=bool(device.get("force_udp", 0)),
+        brand=device.get("brand", "essl"),
     )
 
     if not ok:
@@ -90,7 +91,8 @@ def sync_device_users_all(log_callback=None):
         log(f"[DeviceUsers] Pulling roster from {device['name']}…")
         ok, result = get_device_users(
             device["ip"], device["port"], device["password"],
-            force_udp=bool(device.get("force_udp", 0))
+            force_udp=bool(device.get("force_udp", 0)),
+            brand=device.get("brand", "essl"),
         )
         if ok:
             for u in result:

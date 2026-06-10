@@ -3,7 +3,7 @@ import threading
 from ..core import database as db
 from ..core.device import test_connection
 
-BRANDS = ["eSSL", "ZKTeco", "Realtime", "FingerTec", "Anviz", "Matrix", "Other"]
+BRANDS = ["eSSL", "ZKTeco", "Realtime", "FingerTec", "Anviz", "Matrix", "Morx", "Other"]
 PROTOCOLS = ["TCP (default)", "UDP (older devices)"]
 
 
@@ -57,7 +57,9 @@ class DevicesTab(ctk.CTkFrame):
         # Brand dropdown
         ctk.CTkLabel(form, text="Device Brand", anchor="w").pack(fill="x", pady=(8, 2))
         self.brand_var = ctk.StringVar(value=BRANDS[0])
-        self.brand_menu = ctk.CTkOptionMenu(form, variable=self.brand_var, values=BRANDS, height=36)
+        self.brand_menu = ctk.CTkOptionMenu(
+            form, variable=self.brand_var, values=BRANDS, height=36,
+            command=self._on_brand_change)
         self.brand_menu.pack(fill="x")
 
         # Protocol dropdown
@@ -123,6 +125,16 @@ class DevicesTab(ctk.CTkFrame):
         self.status_label.configure(text="")
         self.delete_btn.pack_forget()
 
+    def _on_brand_change(self, brand):
+        port_entry = self.entries["Port"]
+        current_port = port_entry.get().strip()
+        if brand == "Morx":
+            port_entry.delete(0, "end")
+            port_entry.insert(0, "5005")
+        elif current_port == "5005":
+            port_entry.delete(0, "end")
+            port_entry.insert(0, "4370")
+
     def _force_udp(self):
         return 1 if self.protocol_var.get() == PROTOCOLS[1] else 0
 
@@ -138,7 +150,8 @@ class DevicesTab(ctk.CTkFrame):
         self.status_label.configure(text=f"Testing ({proto})…", text_color="#4fc3f7")
 
         def do_test():
-            ok, msg = test_connection(ip, port, pwd, force_udp=force_udp)
+            ok, msg = test_connection(ip, port, pwd, force_udp=force_udp,
+                                      brand=self.brand_var.get())
             color = "#a5d6a7" if ok else "#ef9a9a"
             self.after(0, lambda: self.status_label.configure(text=msg, text_color=color))
 
