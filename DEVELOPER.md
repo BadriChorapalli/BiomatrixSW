@@ -2,13 +2,17 @@
 
 ## Overview
 
-BiomatrixSync is a Python desktop application that bridges ZKTeco-compatible biometric attendance terminals with the School Insights platform. It runs on Mac and Windows, packages as a single binary via PyInstaller, and stores all state in a local SQLite database.
+BiomatrixSync is a Python desktop application that bridges biometric attendance terminals with the School Insights platform. It runs on Mac and Windows, packages as a single binary via PyInstaller, and stores all state in a local SQLite database.
+
+**Supported device brands:**
+- **eSSL / ZKTeco** (and compatible: Realtime, FingerTec, Anviz, Matrix) — ZK protocol via `pyzk` library
+- **Morx BioFace-MSD1K** — SBXPC protocol via custom pure-Python implementation (`morx_device.py`). No DLL or extra pip package required.
 
 ---
 
 ## Dev Environment Setup
 
-**Prerequisites:** Python 3.12, pip
+**Prerequisites:** Python 3.12+ (3.14 confirmed working on Windows), pip
 
 ```bash
 cd BiomatrixSW
@@ -31,9 +35,13 @@ customtkinter==5.2.2
 pyzk==0.9
 requests==2.31.0
 schedule==1.2.1
-Pillow==10.3.0
-pyinstaller==6.6.0
+Pillow==12.2.0
+pyinstaller==6.20.0
 ```
+
+> **Python 3.14 (Windows):** PyInstaller 6.6.0 and Pillow 10.3.0 are incompatible with Python 3.14. Use `pyinstaller==6.20.0` and `Pillow==12.2.0` as shown above.
+
+> **Morx devices:** `morx_device.py` uses only `socket` and `struct` from the Python standard library. No additional pip package is needed for Morx support.
 
 ---
 
@@ -50,8 +58,9 @@ BiomatrixSW/
 ├── app/
 │   ├── core/
 │   │   ├── database.py        # All SQLite operations
-│   │   ├── device.py          # pyzk wrapper — connect, pull, get_users
-│   │   ├── api_client.py      # School Insights REST API + attendance logic
+│   │   ├── device.py          # Brand router: eSSL → pyzk, Morx → morx_device
+│   │   ├── morx_device.py     # Morx BioFace-MSD1K — SBXPC protocol, pure Python stdlib
+│   │   ├── api_client.py      # School Insights REST API + attendance derivation logic
 │   │   ├── sync.py            # Orchestrates pull → CSV → DB → upload
 │   │   └── scheduler.py       # Background threads (daily sync + auto-pull)
 │   └── ui/
@@ -59,11 +68,75 @@ BiomatrixSW/
 │       ├── main_window.py     # Tab container
 │       ├── dashboard_tab.py
 │       ├── history_tab.py
-│       ├── devices_tab.py
+│       ├── devices_tab.py     # Brand selector auto-sets port (Morx → 5005, others → 4370)
 │       ├── registration_tab.py
 │       ├── settings_tab.py
 │       └── logs_tab.py
 ```
+
+---
+
+## Device Communication
+
+### eSSL / ZKTeco (`device.py` → `pyzk`)
+
+| Property | Value |
+|---|---|
+| Library | `pyzk 0.9` |
+| Protocol | ZKTeco ZK SDK |
+| Port | TCP 4370 (default); UDP optional via `force_udp=True` |
+| Auth | Integer password (default 0) |
+| User data | Name stored on device, returned by `conn.get_users()` |
+| Attendance | `conn.get_attendance()` — all records; filtered by date/since client-side |
+| Connection | `ZK(ip, port, timeout=10, password, force_udp, ommit_ping=False)` |
+
+The `force_udp` flag is per-device in the database and passed through all callers. Use it only for older models that don't respond over TCP.
+
+### Morx BioFace-MSD1K (`device.py` → `morx_device.py`)
+
+| Property | Value |
+|---|---|
+| Library | stdlib only (`socket`, `struct`) — no DLL, no pip package |
+| Protocol | SBXPC (SmackBio proprietary) |
+| Port | TCP 5005 |
+| Machine number | Always `_MACH = 0` (hardware requirement — other values refused) |
+| Auth | Two-packet handshake; password sent as LE uint32 in `params` field |
+| User data | **No name in hardware.** Names filled from `code_mappings` via `_enrich_names()` |
+| Attendance | Full log every pull — SBXPC has no incremental read. Filter by date/since client-side. |
+| Timestamp epoch | 2000-01-01 00:00:00 (not Unix epoch) |
+
+#### SBXPC Packet Format
+```
+[55 aa][mach 2B LE][cmd 4B][params 4B][pad 2B][cs 2B]  = 16 bytes total
+checksum = sum(all_preceding_bytes) & 0xFFFF
+```
+
+#### SBXPC Commands Used
+| Command | Hex | Purpose |
+|---|---|---|
+| Connect | `79 19 52 00` | Authenticate (two-exchange handshake) |
+| EnableDevice(1) / Unlock | `79 19 0c 01` | Release device lock after read |
+| ReadAllUserID | `79 19 12 01` | Get enrolled users (8-byte records) |
+| ReadAllGLogData | `79 19 07 01` | Get all attendance logs (12-byte records) |
+
+> **EnableDevice lock warning:** Do NOT send EnableDevice(0) (`79 19 0b 01`) before reads. After each read, call `_unlock()` (sends EnableDevice(1) on a fresh TCP connection) so the device doesn't stay locked until TCP timeout (~30–60 s).
+
+> **ReadAllGLogData ACK:** Must send `5a a5 [mach 2B] 01 00 00 00 [cs]` between the device's first beacon and the response header. Missing this ACK causes the device to not return data.
+
+#### Brand routing in `device.py`
+```python
+def _is_morx(brand):
+    return str(brand).strip().lower() == "morx"
+
+def pull_attendance(ip, port, password, target_date=None, since=None, force_udp=False, brand="essl"):
+    if _is_morx(brand):
+        ok, result = _morx.pull_attendance(ip, port, password, target_date=target_date, since=since)
+        if ok: _enrich_names(result)
+        return ok, result
+    # ... pyzk path unchanged ...
+```
+
+All callers must pass `brand=device.get("brand", "essl")`. Missing this kwarg silently routes Morx devices through the pyzk path, which fails.
 
 ---
 
@@ -98,9 +171,10 @@ Output: `dist\BiomatrixSync.exe`
 
 ### PyInstaller Notes
 
-- `jaraco.*` packages must be listed as hidden imports in `build.spec` — pyzk depends on them but PyInstaller doesn't auto-detect them.
+- `jaraco.*` packages must be listed as hidden imports in `build.spec` — pyzk depends on them but PyInstaller doesn't auto-detect them. The warnings printed at build time are harmless.
 - macOS entitlements are stripped by PyInstaller's signing step; `codesign` must be re-run manually every time.
 - The `--onedir` mode is used (not `--onefile`) for faster startup.
+- **Python 3.14:** Use pyinstaller 6.20.0 and Pillow 12.2.0. Earlier versions of both packages refuse to install against Python 3.14.
 
 ---
 
@@ -116,8 +190,8 @@ SQLite file location:
 ```sql
 id, name, ip, port, password, enabled, brand TEXT DEFAULT 'eSSL', force_udp INTEGER DEFAULT 0
 ```
-`brand` — display label (eSSL/ZKTeco/Realtime/FingerTec/Anviz/Matrix/Other)  
-`force_udp` — 0 = TCP (default), 1 = UDP (older device models)
+`brand` — eSSL / ZKTeco / Realtime / FingerTec / Anviz / Matrix / **Morx** / Other  
+`force_udp` — 0 = TCP (default), 1 = UDP. Ignored for Morx (TCP only on port 5005).
 
 New columns are added via `ALTER TABLE` migration in `init_db()` so existing installs auto-upgrade.
 
@@ -126,13 +200,13 @@ New columns are added via `ALTER TABLE` migration in `init_db()` so existing ins
 device_id, device_name, user_id TEXT, name, date, time, status
 UNIQUE(device_id, user_id, date, time)
 ```
-Raw punch records. `INSERT OR IGNORE` prevents duplicates.
+Raw punch records. `INSERT OR IGNORE` prevents duplicates. `name` is blank for Morx until `code_mappings` is populated.
 
 **`code_mappings`**
 ```sql
 bio_code TEXT PRIMARY KEY, si_user_id INTEGER, si_name TEXT
 ```
-Maps biometric device enrollment ID → School Insights user_id. Populated from `GET /biometric/codes/`.
+Maps biometric device enrollment ID (as TEXT) → School Insights user_id and name. Populated from `GET /biometric/codes/`. Critical for Morx devices since hardware has no name storage — `_enrich_names()` in `device.py` fills names from this table.
 
 **`marked_today`**
 ```sql
@@ -168,7 +242,7 @@ Tracks which staff have been successfully marked in School Insights for today. R
 
 ### `_derive_daily_records()` — `api_client.py`
 
-The most important function in the codebase. Converts raw punch timestamps into one `{check_in, check_out}` record per person per day.
+The most important function in the codebase. Converts raw punch timestamps into one `{check_in, check_out}` record per person per day. Works identically for both eSSL and Morx devices.
 
 **Why it exists:** Indian biometric devices (especially exit-gate units) report all punches as `CHECK OUT` regardless of direction. The device `status` field is unreliable and is completely ignored.
 
@@ -185,7 +259,7 @@ This function is used for **both** real-time auto-pull and batch upload — sing
 
 ```
 _run_poll()
-  ↓ pull_attendance(since=last_pull)   ← incremental, only new records
+  ↓ pull_attendance(since=last_pull, force_udp=..., brand=...)   ← routes to eSSL or Morx
   ↓ save_attendance()                  ← INSERT OR IGNORE
   ↓ get_marked_today(today)            ← who's already sent to SI today
   ↓ if sorted(mapped) == sorted(marked) → skip
@@ -198,7 +272,7 @@ _run_poll()
 ```
 
 **Key design decisions:**
-- `since=last_pull` — only fetches new records since the last cycle, reducing device load.
+- `since=last_pull` — for eSSL, filters new records since last cycle. For Morx, full log is always returned; `since` filtering happens client-side in `morx_device.py`.
 - `marked_today` check — if all mapped staff are already marked, the entire marking block is skipped regardless of whether new records came in.
 - `mark_attendance()` is called **once per user** using the full day's punch history — never called twice for the same person in the same cycle.
 
@@ -208,7 +282,7 @@ Single `POST /staff-attendance/mark/` call with both `check_in` and `check_out`.
 
 ### Multi-device support
 
-pyzk's `ZK()` constructor accepts `force_udp=True` for older devices that use UDP instead of TCP. The `devices` table stores `force_udp` per device and it's threaded through all device functions. All other logic (data format, derivation, marking) is identical regardless of device brand.
+The `devices` table stores `brand` and `force_udp` per device. All device function calls thread both through via `brand=device.get("brand", "essl")` and `force_udp=bool(device.get("force_udp", 0))`. `force_udp` applies only to eSSL/ZKTeco; Morx always uses TCP.
 
 ---
 
@@ -263,6 +337,9 @@ All UI is CustomTkinter (dark theme). Every tab is a class that extends `CTkFram
 - UI updates from threads always go through `self.after(0, lambda: ...)`.
 - The Dashboard auto-refreshes every 60 seconds via `self.after(60_000, ...)`.
 
+### Devices tab — brand/port auto-fill
+`devices_tab.py` has `_on_brand_change(brand)`: when **Morx** is selected the Port field is auto-filled with `5005`; switching away from Morx restores `4370`. The brand dropdown is a `CTkOptionMenu` with `command=_on_brand_change`. Note: programmatic `set()` does NOT trigger the command callback — only user interaction does.
+
 ### Registration tab behaviour
 - If `si_device_status` is APPROVED or PENDING on load → form is hidden, only status banner + approval panel show.
 - A **Re-register** button on the banner reveals the form if needed.
@@ -289,3 +366,7 @@ All UI is CustomTkinter (dark theme). Every tab is a class that extends `CTkFram
 | Using device `status` field | Gives wrong check_in/check_out on exit-gate devices | Always use `_derive_daily_records()`, never raw status |
 | UI update from background thread | Tkinter crash (not thread-safe) | Wrap all UI updates in `self.after(0, lambda: ...)` |
 | `save_staff()` using `id` instead of `user_id` | Staff stored with NULL si_user_id | API returns `user_id`, not `id` — use `s.get("user_id") or s.get("id")` |
+| Calling device functions without `brand=` | Morx device silently uses ZK/pyzk path, connection fails | Always pass `brand=device.get("brand", "essl")` at every call site |
+| Sending EnableDevice(0) before Morx read | Device stays locked until TCP timeout (~30–60 s) | Never lock; call `_unlock()` (EnableDevice(1) on fresh connection) after each read |
+| Empty Name column for Morx users | `code_mappings` table is empty — no staff mapped yet | Map staff in School Insights → Staff tab → Sync; names populate automatically |
+| Python 3.14 + pyinstaller 6.6.0 | Build fails — package incompatible | Use pyinstaller 6.20.0 and Pillow 12.2.0 |
