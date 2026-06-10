@@ -1,8 +1,10 @@
 import requests
 import hashlib
+import json
 import uuid
 import platform
 import sys
+from datetime import datetime, date
 from . import database as db
 
 BASE_URL = "https://api.schoolinsights.in"
@@ -19,6 +21,16 @@ def _get_device_id():
         device_id = str(uuid.uuid4())
         db.set_setting("si_device_id", device_id)
     return device_id
+
+
+def get_client_device_id():
+    return _get_device_id()
+
+
+def _command_targets_this_client(command):
+    if not isinstance(command, dict):
+        return False
+    return str(command.get("device_id") or "").strip() == _get_device_id()
 
 
 def _os_version():
@@ -42,6 +54,30 @@ def _headers(with_auth=True):
         if token:
             headers["Authorization"] = f"Bearer {token}"
     return headers
+
+
+def _detail(data):
+    if isinstance(data, dict) and "detail" in data:
+        return data["detail"]
+    return data
+
+
+def _json_or_text(response):
+    try:
+        return response.json()
+    except Exception:
+        return response.text[:200]
+
+
+def _normalize_command_list(data):
+    payload = _detail(data)
+    if isinstance(payload, list):
+        return payload
+    if isinstance(payload, dict):
+        commands = payload.get("commands")
+        if isinstance(commands, list):
+            return commands
+    return []
 
 
 # ── Device Registration ──────────────────────────────────────────────────────
@@ -136,6 +172,175 @@ def is_device_approved():
     return db.get_setting("si_device_status") == "APPROVED" and bool(db.get_setting("si_access_token"))
 
 
+# ── Device Heartbeat / Server Commands ───────────────────────────────────────
+
+def post_heartbeat(device_reachable: bool, records_today: int = 0):
+    """POST /biometric/device/heartbeat/ — report client/device liveness.
+
+    This is deliberately best-effort. Callers should ignore failures so the
+    attendance poll loop keeps running when the server is unreachable.
+    """
+    if not is_device_approved():
+        return False, "Device not approved"
+    payload = {
+        "device_status": "online",
+        "biometric_device_reachable": bool(device_reachable),
+        "records_today": int(records_today or 0),
+        "last_pull_at": datetime.now().isoformat(),
+    }
+    try:
+        r = requests.post(
+            f"{BASE_URL}/biometric/device/heartbeat/",
+            json=payload,
+            headers=_headers(),
+            timeout=5,
+        )
+        if r.status_code in (200, 204):
+            return True, "OK"
+        return False, f"Error {r.status_code}: {_json_or_text(r)}"
+    except Exception as e:
+        return False, str(e)
+
+
+def fetch_pending_commands():
+    """GET /biometric/commands/pending/ — polling fallback for server commands."""
+    if not is_device_approved():
+        return []
+    try:
+        r = requests.get(
+            f"{BASE_URL}/biometric/commands/pending/",
+            headers=_headers(),
+            timeout=10,
+        )
+        if r.status_code == 200:
+            return [
+                command
+                for command in _normalize_command_list(r.json())
+                if _command_targets_this_client(command)
+            ]
+    except Exception:
+        pass
+    return []
+
+
+def complete_command(command_id, status, result=None):
+    """POST /biometric/commands/<id>/complete/."""
+    if not command_id:
+        return False, "command_id is required"
+    try:
+        r = requests.post(
+            f"{BASE_URL}/biometric/commands/{command_id}/complete/",
+            json={"status": status, "result": result or {}},
+            headers=_headers(),
+            timeout=10,
+        )
+        if r.status_code in (200, 201):
+            return True, "OK"
+        return False, f"Error {r.status_code}: {_json_or_text(r)}"
+    except Exception as e:
+        return False, str(e)
+
+
+def post_reconcile_result(command_id, result):
+    """POST /biometric/commands/<id>/reconcile-result/."""
+    try:
+        r = requests.post(
+            f"{BASE_URL}/biometric/commands/{command_id}/reconcile-result/",
+            json=result or {},
+            headers=_headers(),
+            timeout=15,
+        )
+        if r.status_code in (200, 201):
+            return True, "OK"
+        return False, f"Error {r.status_code}: {_json_or_text(r)}"
+    except Exception as e:
+        return False, str(e)
+
+
+def post_verify_result(command_id, result):
+    """POST /biometric/commands/<id>/verify-result/."""
+    try:
+        r = requests.post(
+            f"{BASE_URL}/biometric/commands/{command_id}/verify-result/",
+            json=result or {},
+            headers=_headers(),
+            timeout=15,
+        )
+        if r.status_code in (200, 201):
+            return True, "OK"
+        return False, f"Error {r.status_code}: {_json_or_text(r)}"
+    except Exception as e:
+        return False, str(e)
+
+
+def listen_command_stream(command_queue, stop_event, log_callback=None):
+    """Listen to GET /biometric/device/stream/ and enqueue command events.
+
+    The scheduler drains command_queue and executes commands serially. If SSE
+    disconnects, this function reconnects with bounded backoff; the scheduler's
+    polling fallback continues to work independently.
+    """
+    backoff = 10
+
+    def log(msg):
+        if log_callback:
+            log_callback(msg)
+
+    while not stop_event.is_set():
+        if not is_device_approved():
+            stop_event.wait(10)
+            continue
+
+        try:
+            with requests.get(
+                f"{BASE_URL}/biometric/device/stream/",
+                headers=_headers(),
+                stream=True,
+                timeout=(10, None),
+            ) as response:
+                response.raise_for_status()
+                backoff = 10
+                log("[SSE] Connected to command stream")
+
+                event_name = None
+                data_lines = []
+                for raw_line in response.iter_lines(decode_unicode=True):
+                    if stop_event.is_set():
+                        break
+                    if raw_line is None:
+                        continue
+                    line = raw_line.strip()
+                    if not line:
+                        if event_name == "command" and data_lines:
+                            try:
+                                command = json.loads("\n".join(data_lines))
+                                if _command_targets_this_client(command):
+                                    command_queue.put(command)
+                                    log(f"[SSE] Command received: {command.get('command_type')}")
+                                else:
+                                    log(
+                                        "[SSE] Ignored command for device "
+                                        f"{command.get('device_id')}; this client is {_get_device_id()}"
+                                    )
+                            except Exception as exc:
+                                log(f"[SSE] Invalid command payload: {exc}")
+                        event_name = None
+                        data_lines = []
+                        continue
+                    if line.startswith(":"):
+                        continue
+                    if line.startswith("event:"):
+                        event_name = line[6:].strip()
+                    elif line.startswith("data:"):
+                        data_lines.append(line[5:].strip())
+        except Exception:
+            if stop_event.is_set():
+                break
+            log(f"[SSE] Disconnected — reconnecting in {backoff}s")
+            stop_event.wait(backoff)
+            backoff = min(60, 30 if backoff == 10 else backoff * 2)
+
+
 # ── Staff Data ───────────────────────────────────────────────────────────────
 
 def get_staff_list(school_id=None):
@@ -152,7 +357,8 @@ def get_staff_list(school_id=None):
         )
         if r.status_code == 200:
             data = r.json()
-            users = data.get("users", data if isinstance(data, list) else [])
+            payload = _detail(data)
+            users = payload.get("users", payload if isinstance(payload, list) else [])
             return True, users
         return False, f"Error {r.status_code}: {r.json().get('error', r.text[:200])}"
     except Exception as e:
@@ -353,6 +559,223 @@ def mark_attendance(si_user_id, date_str, check_in, check_out=None):
         return False, data.get("detail", r.text[:200])
     except Exception as e:
         return False, str(e)
+
+
+def _staff_user_id(row):
+    return row.get("user_id") or row.get("si_user_id") or row.get("id")
+
+
+def _staff_name(row):
+    return (
+        row.get("name")
+        or row.get("full_name")
+        or row.get("si_name")
+        or row.get("username")
+        or ""
+    )
+
+
+def _time_hhmm(value):
+    if value in (None, "", "—"):
+        return None
+    text = str(value)
+    if "T" in text and len(text) >= 16:
+        return text[11:16]
+    if " " in text and len(text) >= 16:
+        return text[11:16]
+    if len(text) >= 5 and text[2] == ":":
+        return text[:5]
+    return None
+
+
+def _minute_value(value):
+    hhmm = _time_hhmm(value)
+    if not hhmm:
+        return None
+    try:
+        hours, minutes = hhmm.split(":", 1)
+        return int(hours) * 60 + int(minutes)
+    except Exception:
+        return None
+
+
+def _minutes_differ(left, right, tolerance=1):
+    left_minutes = _minute_value(left)
+    right_minutes = _minute_value(right)
+    if left_minutes is None and right_minutes is None:
+        return False
+    if left_minutes is None or right_minutes is None:
+        return True
+    return abs(left_minutes - right_minutes) > tolerance
+
+
+def _server_staff_map(staff_list):
+    result = {}
+    for row in staff_list or []:
+        user_id = _staff_user_id(row)
+        if user_id is not None:
+            result[int(user_id)] = row
+    return result
+
+
+def build_reconciliation_report(device_users, target_date=None):
+    """Build Scenario 2 reconciliation payload for the server."""
+    if target_date is None:
+        target_date = date.today()
+    date_str = target_date.isoformat() if hasattr(target_date, "isoformat") else str(target_date)
+
+    mappings = db.get_all_code_mappings()
+    marked_today = db.get_marked_today(date_str)
+    ok, staff_or_err = get_staff_list()
+    server_map = _server_staff_map(staff_or_err) if ok else {}
+
+    device_user_codes = {str(u.get("user_id")) for u in (device_users or []) if u.get("user_id") is not None}
+    unmapped_device_users = sorted(code for code in device_user_codes if code not in mappings)
+
+    staff_rows = []
+    present = absent = unmarked = 0
+    for bio_code, mapping in sorted(mappings.items(), key=lambda item: item[1].get("si_name", "")):
+        si_user_id = int(mapping["si_user_id"])
+        server_row = server_map.get(si_user_id, {})
+        status = server_row.get("status")
+        check_in = _time_hhmm(server_row.get("check_in"))
+        check_out = _time_hhmm(server_row.get("check_out"))
+        source = server_row.get("source")
+        marked_any = status == "present" or bool(check_in or check_out)
+        marked_bio = bio_code in marked_today
+
+        if marked_any:
+            present += 1
+        elif status == "absent":
+            absent += 1
+        else:
+            unmarked += 1
+
+        staff_rows.append({
+            "bio_code": bio_code,
+            "si_name": mapping.get("si_name") or _staff_name(server_row),
+            "on_device": bio_code in device_user_codes,
+            "marked_biometric": marked_bio,
+            "marked_any_source": marked_any,
+            "check_in": check_in,
+            "check_out": check_out,
+            "source": source,
+        })
+
+    return {
+        "date": date_str,
+        "mapped_count": len(mappings),
+        "device_enrolled_count": len(device_user_codes),
+        "staff": staff_rows,
+        "unmapped_device_users": unmapped_device_users,
+        "summary": {"present": present, "absent": absent, "unmarked": unmarked},
+    }
+
+
+def verify_today_attendance(all_punches, target_date=None, log_callback=None):
+    """Scenario 3 — full-day verify and correction pass.
+
+    Runs _derive_daily_records() once over the full day pull, compares the
+    derived check-in/out against the server state, and calls mark_attendance()
+    at most once per mapped staff member.
+    """
+    if target_date is None:
+        target_date = date.today()
+    date_str = target_date.isoformat() if hasattr(target_date, "isoformat") else str(target_date)
+
+    mappings = db.get_all_code_mappings()
+    derived_records = {
+        str(row["user_id"]): row
+        for row in _derive_daily_records(all_punches or [])
+    }
+
+    ok, staff_or_err = get_staff_list()
+    server_map = _server_staff_map(staff_or_err) if ok else {}
+
+    corrected = []
+    already_correct = 0
+    no_punches = 0
+    failed = 0
+
+    def log(msg):
+        if log_callback:
+            log_callback(msg)
+
+    if not ok:
+        return {
+            "date": date_str,
+            "total_mapped": len(mappings),
+            "corrected": [],
+            "already_correct": 0,
+            "no_punches": 0,
+            "failed": len(mappings),
+            "error": staff_or_err,
+        }
+
+    for bio_code, mapping in sorted(mappings.items(), key=lambda item: item[1].get("si_name", "")):
+        derived = derived_records.get(str(bio_code))
+        si_name = mapping.get("si_name", "")
+        if not derived:
+            no_punches += 1
+            continue
+
+        server_row = server_map.get(int(mapping["si_user_id"]), {})
+        old_check_in = _time_hhmm(server_row.get("check_in"))
+        old_check_out = _time_hhmm(server_row.get("check_out"))
+        new_check_in = _time_hhmm(derived.get("check_in"))
+        new_check_out = _time_hhmm(derived.get("check_out"))
+
+        action = "no_change"
+        should_mark = False
+        if new_check_out and not old_check_out:
+            action = "check_out_added"
+            should_mark = True
+        elif old_check_out and not new_check_out:
+            action = "check_out_cleared"
+            should_mark = True
+        elif _minutes_differ(old_check_in, new_check_in):
+            action = "check_in_corrected"
+            should_mark = True
+        elif _minutes_differ(old_check_out, new_check_out):
+            # A shifted check-out (not added/cleared) is its own action so the
+            # verify report does not mislabel it as a check-in correction.
+            action = "check_out_corrected"
+            should_mark = True
+
+        if not should_mark:
+            already_correct += 1
+            continue
+
+        mark_ok, mark_msg = mark_attendance(
+            mapping["si_user_id"],
+            derived["date"],
+            derived["check_in"],
+            derived.get("check_out"),
+        )
+        if mark_ok:
+            db.save_marked_today(bio_code, date_str, derived.get("check_out"))
+            corrected.append({
+                "bio_code": bio_code,
+                "si_name": si_name,
+                "old_check_in": old_check_in,
+                "old_check_out": old_check_out,
+                "new_check_in": new_check_in,
+                "new_check_out": new_check_out,
+                "action": action,
+            })
+            log(f"[Verify] Corrected {si_name}: {action}")
+        else:
+            failed += 1
+            log(f"[Verify] Failed {si_name}: {mark_msg}")
+
+    return {
+        "date": date_str,
+        "total_mapped": len(mappings),
+        "corrected": corrected,
+        "already_correct": already_correct,
+        "no_punches": no_punches,
+        "failed": failed,
+    }
 
 
 # ── Attendance Upload ────────────────────────────────────────────────────────
