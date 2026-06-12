@@ -521,6 +521,43 @@ def sync_device_users(users, school_id=None):
         return False, str(e), 0
 
 
+# ── Bulk Fallback Mark (bio_code → server resolves user_id) ─────────────────
+
+def bulk_mark_by_biocodes(records):
+    """POST /biometric/upload/direct/ — fallback bulk mark using raw bio_codes.
+
+    The server resolves bio_code → SI user_id via StaffBiometricCode, so this
+    works even when local code_mappings are stale or empty.
+
+    records: list of dicts:
+        {"bio_code": "71", "date": "2026-06-09",
+         "check_in": "2026-06-09T08:30:00+05:30",   # ISO 8601
+         "check_out": "2026-06-09T17:14:00+05:30"}   # or None
+
+    Returns (ok: bool, detail: dict)
+    """
+    if not is_device_approved():
+        return False, "Device not approved"
+    school_id = db.get_setting("si_school_id", "")
+    if not school_id:
+        return False, "School ID not set"
+    if not records:
+        return True, {"created": 0, "updated": 0, "unchanged": 0,
+                      "unmatched": 0, "unmatched_codes": []}
+    try:
+        r = requests.post(
+            f"{BASE_URL}/biometric/upload/direct/",
+            json={"school_id": int(school_id), "records": records},
+            headers=_headers(),
+            timeout=30,
+        )
+        if r.status_code in (200, 201):
+            return True, _detail(r.json())
+        return False, _detail(_json_or_text(r))
+    except Exception as e:
+        return False, str(e)
+
+
 # ── Real-time Mark ───────────────────────────────────────────────────────────
 
 def mark_attendance(si_user_id, date_str, check_in, check_out=None):

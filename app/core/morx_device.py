@@ -133,7 +133,13 @@ def get_device_users(ip, port, password, **kwargs):
         # Step 2: fetch all finger records
         s.sendall(_pkt(b"\x79\x19\x12\x01", struct.pack("<I", count), b"\x01\x00"))
         _recv_beacon(s)
-        _recv_header(s)
+        ack = b"\x5a\xa5" + struct.pack("<H", _MACH) + b"\x01\x00\x00\x00"
+        ack += struct.pack("<H", _cs16(ack))
+        s.sendall(ack)
+        hdr = _recv_header(s)
+        if struct.unpack_from("<H", hdr, 6)[0] != 1:
+            s.close()
+            return True, []
         raw = _drain(s, timeout=15.0)
         s.close()
         _unlock(ip, port, password)
