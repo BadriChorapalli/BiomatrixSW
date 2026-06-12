@@ -616,6 +616,14 @@ def _run_poll(interval_minutes, log_callback):
                         if parts:
                             log(f"   Summary : {' | '.join(parts)}")
 
+                        # Auto-fallback: after every poll cycle, send all still-unmarked
+                        # bio_codes to /biometric/upload/direct/ so the server can resolve
+                        # them independently. No-op if everyone is already marked.
+                        from .api_client import run_fallback_sync
+                        fb_ok, fb_detail = run_fallback_sync(today_str, log)
+                        if not fb_ok:
+                            log(f"   ✗ Fallback sync failed: {fb_detail}")
+
                 last_pull[device["id"]] = now
                 db.set_setting("last_device_pull", now.strftime("%Y-%m-%d %H:%M:%S"))
 

@@ -558,6 +558,56 @@ def bulk_mark_by_biocodes(records):
         return False, str(e)
 
 
+def run_fallback_sync(date_str, log_callback=None):
+    """Auto-fallback: derive daily records for date_str, send all unmarked bio_codes
+    to /biometric/upload/direct/, and persist the result to marked_today.
+
+    Called automatically from the poll loop when mark_attendance() failures occur,
+    and also by the manual Fallback Sync button in the History tab.
+
+    Returns (ok: bool, detail: dict) where detail has keys:
+        imported, updated, skipped_unmatched  (on success)
+        reason  ('no_records' | 'already_marked')  (on early-exit with ok=True)
+    """
+    def log(msg):
+        if log_callback:
+            log_callback(msg)
+
+    records = db.get_attendance_by_date(date_str)
+    if not records:
+        return True, {"imported": 0, "updated": 0, "skipped_unmatched": 0, "reason": "no_records"}
+
+    daily = _derive_daily_records(records)
+    marked = db.get_marked_today(date_str)
+    pending = [d for d in daily if str(d["user_id"]) not in marked]
+
+    if not pending:
+        return True, {"imported": 0, "updated": 0, "skipped_unmatched": 0, "reason": "already_marked"}
+
+    payload = [
+        {
+            "bio_code":  str(d["user_id"]),
+            "date":      d["date"],
+            "check_in":  d.get("check_in"),
+            "check_out": d.get("check_out"),
+        }
+        for d in pending
+    ]
+
+    ok, detail = bulk_mark_by_biocodes(payload)
+    if ok:
+        for entry in payload:
+            db.save_marked_today(entry["bio_code"], date_str, entry.get("check_out"))
+        created   = detail.get("imported", 0) if isinstance(detail, dict) else 0
+        updated   = detail.get("updated", 0) if isinstance(detail, dict) else 0
+        unmatched = detail.get("skipped_unmatched", 0) if isinstance(detail, dict) else 0
+        log(f"[Fallback] {len(payload)} sent — {created} created, {updated} updated, {unmatched} unmatched on server")
+    else:
+        log(f"[Fallback] Failed: {detail}")
+
+    return ok, detail if isinstance(detail, dict) else {"error": str(detail)}
+
+
 # ── Real-time Mark ───────────────────────────────────────────────────────────
 
 def mark_attendance(si_user_id, date_str, check_in, check_out=None):

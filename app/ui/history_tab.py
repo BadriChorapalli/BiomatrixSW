@@ -4,7 +4,7 @@ from datetime import date, timedelta
 from ..core import database as db
 from ..core.device import pull_attendance
 from ..core.database import save_attendance
-from ..core.api_client import _derive_daily_records, _parse_time, bulk_mark_by_biocodes
+from ..core.api_client import _derive_daily_records, _parse_time
 
 
 class HistoryTab(ctk.CTkFrame):
@@ -318,7 +318,9 @@ class HistoryTab(ctk.CTkFrame):
     # ── Fallback Sync ─────────────────────────────────────────────────────────
 
     def _fallback_sync(self):
-        """Send today's unmarked records to /biometric/upload/direct/ using raw bio_codes."""
+        """Send unmarked records for the selected date to /biometric/upload/direct/."""
+        from ..core.api_client import run_fallback_sync
+
         date_str = self.date_var.get().strip()
         records = db.get_attendance_by_date(date_str)
         if not records:
@@ -326,42 +328,29 @@ class HistoryTab(ctk.CTkFrame):
                                        text_color="#ef9a9a")
             return
 
-        daily = _derive_daily_records(records)
         marked = db.get_marked_today(date_str)
-
-        # Only send codes that haven't been successfully marked yet
-        pending = [d for d in daily if str(d["user_id"]) not in marked]
-        if not pending:
+        pending_count = sum(
+            1 for d in _derive_daily_records(records)
+            if str(d["user_id"]) not in marked
+        )
+        if pending_count == 0:
             self.stats_label.configure(text="All records already marked on server.",
                                        text_color="#a5d6a7")
             return
 
-        payload = [
-            {
-                "bio_code":  str(d["user_id"]),
-                "date":      d["date"],
-                "check_in":  d.get("check_in"),
-                "check_out": d.get("check_out"),
-            }
-            for d in pending
-        ]
-
         self.stats_label.configure(
-            text=f"Sending {len(payload)} unmarked record(s) to server…",
+            text=f"Sending {pending_count} unmarked record(s) to server…",
             text_color="#4fc3f7"
         )
         self._fallback_btn.configure(state="disabled")
 
         def do_sync():
-            ok, detail = bulk_mark_by_biocodes(payload)
+            ok, detail = run_fallback_sync(date_str)
             if ok:
-                skipped = detail.get("skipped_unmatched", 0) if isinstance(detail, dict) else 0
-                imported = detail.get("imported", 0) if isinstance(detail, dict) else 0
-                updated = detail.get("updated", 0) if isinstance(detail, dict) else 0
-                # Mark all sent codes locally so they aren't retried
-                for entry in payload:
-                    db.save_marked_today(entry["bio_code"], date_str, entry.get("check_out"))
-                msg = f"Fallback sync done — {imported} created, {updated} updated"
+                created   = detail.get("imported", 0) if isinstance(detail, dict) else 0
+                updated   = detail.get("updated", 0) if isinstance(detail, dict) else 0
+                skipped   = detail.get("skipped_unmatched", 0) if isinstance(detail, dict) else 0
+                msg = f"Fallback sync done — {created} created, {updated} updated"
                 if skipped:
                     msg += f", {skipped} unmatched (no server mapping)"
                 color = "#a5d6a7"
