@@ -174,15 +174,29 @@ pip install -r requirements.txt
 # Python 3.14 only: override the two incompatible packages
 pip install pyinstaller==6.20.0 Pillow==12.2.0
 
-# Build
+# Build both EXEs (GUI + service)
 build.bat
 ```
 
-Output: `dist\BiomatrixSync.exe` — self-contained, no Python needed on the target machine.
+Output:
+- `dist\BiomatrixSync.exe` — GUI desktop app
+- `dist\BiomatrixSyncService.exe` — headless Windows Service (entry point: `windows_service.py`)
+
+**After building on Windows, rebuild the installer:**
+
+```bat
+cd BiomatrixSyncPackage
+copy /Y ..\dist\BiomatrixSync.exe dist\
+copy /Y ..\dist\BiomatrixSyncService.exe dist\
+build_installer.bat
+```
+
+Output: `BiomatrixSyncPackage\Output\BiomatrixSync_Setup.exe` — single-file installer for school PCs. Requires Inno Setup 6 installed on the build machine.
 
 > `pystray._win32` warnings on Mac builds ("Hidden import not found") are harmless — the module is Windows-only and intentionally absent on Mac.
+> `win32timezone` must be in hidden imports for the service EXE — without it `win32serviceutil` crashes at install time with `ModuleNotFoundError`.
 
-Git: commit only `app/**/*.py`, `main.py`, `build.spec`, `build.sh`, `build.bat`, `requirements.txt`, `entitlements.plist`. Never commit `dist/`, `build/`, `__pycache__/`, `*.db`, `exports/`.
+Git: commit only `app/**/*.py`, `main.py`, `windows_service.py`, `build.spec`, `build.sh`, `build.bat`, `requirements.txt`, `entitlements.plist`, `BiomatrixSyncPackage/setup.iss`, `BiomatrixSyncPackage/build_installer.bat`. Never commit `dist/`, `build/`, `BiomatrixSyncPackage/dist/`, `BiomatrixSyncPackage/Output/`, `__pycache__/`, `*.db`, `exports/`.
 
 ---
 

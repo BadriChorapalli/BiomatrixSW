@@ -50,11 +50,20 @@ pyinstaller==6.20.0
 ```
 BiomatrixSW/
 ├── main.py                    # Entry point — init DB, show login window
-├── build.spec                 # PyInstaller spec (auto-detects Mac/Windows)
+├── windows_service.py         # Windows Service entry point (used by BiomatrixSyncService.exe)
+├── build.spec                 # PyInstaller spec (auto-detects Mac/Windows; builds both GUI + service EXE)
 ├── build.sh                   # Mac build script
-├── build.bat                  # Windows build script
+├── build.bat                  # Windows build script → dist\BiomatrixSync.exe + dist\BiomatrixSyncService.exe
+├── install_service.bat        # Manual: right-click → Run as admin to install service
+├── uninstall_service.bat      # Manual: right-click → Run as admin to remove service
 ├── entitlements.plist         # macOS network sandbox entitlements
 ├── requirements.txt
+├── BiomatrixSyncPackage/      # Installer package (copy Output\ to pendrive)
+│   ├── setup.iss              # Inno Setup script — source for the setup wizard
+│   ├── build_installer.bat    # Run this to rebuild BiomatrixSync_Setup.exe
+│   ├── dist/                  # Copies of the built EXEs (gitignored)
+│   └── Output/                # Compiled installer output (gitignored)
+│       └── BiomatrixSync_Setup.exe  ← single-file installer for school PCs
 ├── app/
 │   ├── core/
 │   │   ├── database.py        # All SQLite operations
@@ -202,9 +211,27 @@ Output: `dist/BiomatrixSync.app`
 
 #### Distributing the build
 
-- Copy `dist\BiomatrixSync.exe` to the target PC. No installer wizard is needed — just double-click to launch.
-- If Windows Defender shows a SmartScreen warning ("Windows protected your PC"), click **More info → Run anyway**. This is expected for unsigned executables and is not a security issue.
-- Some antivirus products may flag PyInstaller executables as suspicious. Add an exclusion for the app folder on affected machines if needed.
+**Recommended — build the installer wizard:**
+
+After `build.bat` completes, rebuild the installer so it contains the fresh EXEs:
+
+```bat
+cd BiomatrixSyncPackage
+copy /Y ..\dist\BiomatrixSync.exe dist\
+copy /Y ..\dist\BiomatrixSyncService.exe dist\
+build_installer.bat
+```
+
+This produces `BiomatrixSyncPackage\Output\BiomatrixSync_Setup.exe` — a single ~44 MB file. Copy this to a USB drive and run it on any school PC. The wizard installs files to `C:\Program Files\BiomatrixSync\`, registers and starts the Windows service, and creates a desktop shortcut. Uninstalling via Add/Remove Programs also stops and removes the service cleanly.
+
+**Inno Setup** must be installed on the build machine (`C:\Program Files (x86)\Inno Setup 6\`). Download from `https://jrsoftware.org/isdl.php` if missing.
+
+**Manual deploy (no installer):**
+
+- Copy `dist\BiomatrixSync.exe` to the target PC — double-click to launch the GUI.
+- For the background service, also copy `dist\BiomatrixSyncService.exe`, `install_service.bat`, and `uninstall_service.bat`.
+- If Windows Defender shows a SmartScreen warning, click **More info → Run anyway**. Expected for unsigned executables.
+- Some antivirus products may flag PyInstaller executables. Add an exclusion for the app folder on affected machines if needed.
 
 #### Windows-specific features in the build
 
@@ -217,6 +244,7 @@ Output: `dist/BiomatrixSync.app`
 
 - `jaraco.*` packages must be listed as hidden imports in `build.spec` — pyzk depends on them but PyInstaller doesn't auto-detect them. The warnings printed at build time are harmless.
 - `pystray._win32` and `pystray._base` are listed as hidden imports for the Windows system tray feature. On Mac these emit "not found" warnings during the build — also harmless; the module is platform-specific and is never loaded at runtime on Mac.
+- **`win32timezone` must be a hidden import for the service EXE.** `win32serviceutil.HandleCommandLine()` imports `win32timezone` internally; without it the service EXE crashes with `ModuleNotFoundError` before installation even starts. It is listed under the `svc` Analysis block in `build.spec`.
 - macOS entitlements are stripped by PyInstaller's signing step; `codesign` must be re-run manually every time after a Mac build.
 - The `--onedir` mode is used (not `--onefile`) for faster startup.
 - **Python 3.14 (Windows):** Use `pyinstaller==6.20.0` and `Pillow==12.2.0`. The versions pinned in `requirements.txt` (`pyinstaller==6.6.0`, `Pillow==10.3.0`) are Mac-compatible but refuse to install against Python 3.14.
@@ -415,3 +443,4 @@ All UI is CustomTkinter (dark theme). Every tab is a class that extends `CTkFram
 | Sending EnableDevice(0) before Morx read | Device stays locked until TCP timeout (~30–60 s) | Never lock; call `_unlock()` (EnableDevice(1) on fresh connection) after each read |
 | Empty Name column for Morx users | `code_mappings` table is empty — no staff mapped yet | Map staff in School Insights → Staff tab → Sync; names populate automatically |
 | Python 3.14 + pyinstaller 6.6.0 | Build fails — package incompatible | Use pyinstaller 6.20.0 and Pillow 12.2.0 |
+| `win32timezone` missing from service EXE | `ModuleNotFoundError` crash on `BiomatrixSyncService.exe install` | Add `'win32timezone'` to the `svc` Analysis `hiddenimports` in `build.spec` and rebuild |

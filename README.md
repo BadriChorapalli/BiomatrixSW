@@ -30,15 +30,21 @@ You do not need to do anything manually after the initial setup.
 
 ### On Windows
 
-1. Copy the entire folder containing `BiomatrixSync.exe`, `BiomatrixSyncService.exe`, `install_service.bat`, and `uninstall_service.bat` to the PC (e.g. `C:\BiomatrixSync\`).
-2. Double-click `BiomatrixSync.exe` to launch the GUI app.
-3. That's it — no Python, no installation wizard needed.
+**Recommended — use the installer:**
 
-> If Windows Defender shows a warning, click **More info → Run anyway**. The app is safe; it just isn't signed with a paid certificate.
+1. Copy `BiomatrixSync_Setup.exe` to the PC (from `BiomatrixSyncPackage\Output\`).
+2. Double-click it → **Next → Next → Install**.
+3. The wizard installs the app, registers the background service, starts it, and creates a desktop shortcut automatically.
+
+> If Windows Defender shows a SmartScreen warning, click **More info → Run anyway**. The app is safe; it just isn't signed with a paid certificate.
+
+**Manual (no installer):**
+
+Copy `BiomatrixSync.exe`, `BiomatrixSyncService.exe`, `install_service.bat`, and `uninstall_service.bat` to the PC (e.g. `C:\BiomatrixSync\`), then right-click `install_service.bat` → **Run as administrator**.
 
 **Optional: Run as a Windows Service (recommended for school PCs)**
 
-Installing as a Windows Service means the app runs in the background automatically at boot — even before anyone logs in. See [Running as a Windows Service](#running-as-a-windows-service-windows-only) below.
+Installing as a Windows Service means the app runs in the background automatically at boot — even before anyone logs in. The installer wizard handles this automatically. See [Running as a Windows Service](#running-as-a-windows-service-windows-only) below for manual steps.
 
 ### On Mac
 
@@ -129,9 +135,12 @@ By default the app runs as a normal desktop program — it must be open (or mini
 
 ### Install
 
+**Via installer (recommended):** Run `BiomatrixSync_Setup.exe` — it installs the service automatically, no extra steps needed.
+
+**Manually:**
 1. Right-click `install_service.bat` → **Run as administrator**.
 2. The script installs the service, sets it to start automatically at boot, and starts it immediately.
-3. You can confirm it is running with:
+3. Confirm it is running:
    ```
    sc query BiomatrixSync
    ```
@@ -172,7 +181,7 @@ You generally don't need to do anything. Just make sure the app is open on the P
 | App not pulling automatically | Make sure Auto Pull is enabled in Settings. Check the Logs tab for errors. |
 | Registration tab shows a form after already being approved | This shouldn't happen — the form hides automatically on approval. If it does, check your internet connection and click "Check Status". |
 | Forgot password | Delete the file `biomatrix.db` from the app data folder and restart. This resets everything (you'll need to redo setup). |
-| Windows Service won't start | Run `install_service.bat` as Administrator. Check `C:\ProgramData\BiomatrixSync\service.log` for error details. |
+| Windows Service won't start | Re-run `BiomatrixSync_Setup.exe` or right-click `install_service.bat` → Run as administrator. Check `C:\ProgramData\BiomatrixSync\service.log` for details. |
 | Service installed but attendance not syncing | Open `BiomatrixSync.exe` and check the Logs tab. Make sure devices are configured and the device is approved in School Insights. |
 | Names showing blank in attendance records (Morx devices) | Morx hardware does not store staff names. Names come from the staff mapping in School Insights. Go to the **Staff** tab → **Sync from School Insights**, then assign biometric codes to each staff member. |
 
