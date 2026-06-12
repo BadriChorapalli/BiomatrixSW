@@ -14,6 +14,7 @@ a = Analysis(
         'zk', 'zk.base', 'zk.const', 'zk.exception',
         'schedule', 'customtkinter',
         'tkinter', 'tkinter.ttk',
+        'pystray', 'pystray._win32', 'pystray._base',
         'jaraco.functools', 'jaraco.context', 'jaraco.text',
         'pkg_resources._vendor.jaraco.functools',
         'pkg_resources._vendor.jaraco.context',

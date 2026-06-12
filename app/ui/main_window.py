@@ -8,6 +8,7 @@ from .registration_tab import RegistrationTab
 from .staff_tab import StaffTab
 from .mapping_tab import MappingTab
 from .device_config_tab import DeviceConfigTab
+from .tray import TrayIcon
 from ..core import scheduler
 
 ctk.set_appearance_mode("dark")
@@ -15,11 +16,12 @@ ctk.set_default_color_theme("blue")
 
 
 class MainWindow(ctk.CTk):
-    def __init__(self):
+    def __init__(self, start_hidden=False):
         super().__init__()
         self.title("Biomatrix Sync — BellWeather")
         self.geometry("900x620")
         self.minsize(800, 560)
+        self._tray = TrayIcon(on_show=self._show_from_tray, on_quit=self.quit_app)
         self._build_ui()
         scheduler.start(log_callback=self.append_log)
         # Start auto-pull if enabled in settings
@@ -33,6 +35,8 @@ class MainWindow(ctk.CTk):
                 interval_minutes=interval,
                 log_callback=self.append_log,
             )
+        if start_hidden:
+            self.after(100, self._hide_to_tray)
 
     def _build_ui(self):
         # Header
@@ -66,7 +70,24 @@ class MainWindow(ctk.CTk):
         if "Pulled" in message or "Marked" in message or "marked" in message:
             self.after(0, self.history.refresh_if_today)
 
+    def _hide_to_tray(self):
+        self.withdraw()
+        self._tray.start()
+
+    def _show_from_tray(self):
+        self.deiconify()
+        self.lift()
+        self.focus_force()
+
     def on_closing(self):
+        import sys
+        if sys.platform == "win32":
+            self._hide_to_tray()
+        else:
+            self.quit_app()
+
+    def quit_app(self):
+        self._tray.stop()
         scheduler.stop()
         scheduler.stop_device_poll()
         self.destroy()

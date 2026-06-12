@@ -1,7 +1,9 @@
+import sys
 import customtkinter as ctk
 import hashlib
 from ..core import database as db
 from ..core import scheduler
+from ..core import autostart
 
 
 def _hash(password):
@@ -140,6 +142,21 @@ class SettingsTab(ctk.CTkFrame):
         ctk.CTkButton(scroll, text="Clear Cloud Sync Data", command=self._clear_data,
                       height=36, fg_color="#b71c1c", hover_color="#7f0000").pack(anchor="w", padx=16, pady=(4, 0))
 
+        # Start with Windows (Windows only)
+        if sys.platform == "win32":
+            self._section(scroll, "Startup")
+            startup_row = ctk.CTkFrame(scroll, fg_color="transparent")
+            startup_row.pack(fill="x", padx=16, pady=(4, 0))
+            self._autostart_var = ctk.BooleanVar(value=autostart.is_enabled())
+            ctk.CTkSwitch(startup_row, text="Start with Windows (runs in background on startup)",
+                          variable=self._autostart_var,
+                          button_color="#4caf50", progress_color="#1b5e20",
+                          font=ctk.CTkFont(size=12),
+                          command=self._toggle_autostart).pack(side="left")
+            ctk.CTkLabel(scroll,
+                         text="When enabled, BiomatrixSync starts automatically in the system tray after Windows boots.",
+                         text_color="#888", font=ctk.CTkFont(size=11)).pack(anchor="w", padx=16, pady=(4, 0))
+
         # Save button
         self.status_label = ctk.CTkLabel(scroll, text="", text_color="#a5d6a7")
         self.status_label.pack(anchor="w", padx=16, pady=(16, 4))
@@ -242,6 +259,12 @@ class SettingsTab(ctk.CTkFrame):
         self.new_pass.delete(0, "end")
         self.confirm_pass.delete(0, "end")
         self.pass_status.configure(text="Password changed successfully.", text_color="#a5d6a7")
+
+    def _toggle_autostart(self):
+        if self._autostart_var.get():
+            autostart.enable()
+        else:
+            autostart.disable()
 
     def _save(self):
         db.set_setting("api_url", self.api_url.get().strip())
