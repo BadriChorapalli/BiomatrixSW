@@ -217,14 +217,33 @@ The same `build.spec` handles both platforms automatically — detects OS at bui
 ## Known issues / fixes applied
 - **macOS network sandbox:** `entitlements.plist` must be re-applied after every PyInstaller build via `codesign`
 - **Missing `jaraco` module:** Added as hidden import in `build.spec` to fix PyInstaller crash on launch
-- **Python 3.14 (Windows build machine):** PyInstaller 6.6.0 does not support Python 3.14 — use 6.20.0. Pillow 10.3.0 also incompatible — use 12.2.0.
+- **Python 3.14 (Windows build machine):** PyInstaller 6.6.0 does not support Python 3.14 — use 6.20.0. Pillow 10.3.0 also incompatible — use 12.2.0. Override after `pip install -r requirements.txt`: `pip install pyinstaller==6.20.0 Pillow==12.2.0`
+- **`pystray._win32` "not found" on Mac build:** `pystray._win32` is listed as a hidden import in `build.spec` for the Windows system tray feature. On Mac this emits a build warning — harmless; the module is Windows-only and never loaded on Mac.
 - **Morx SBXPC DLL (SBXPCDLL64.dll):** Original DLL has two fatal bugs (rejects mach=0, corrupts checksum). `morx_device.py` bypasses the DLL entirely with a pure Python reimplementation of the wire protocol.
 - **Morx device locking:** Sending `EnableDevice(0)` before reads locks the device. The unlock command (`EnableDevice(1)`) must be sent after reads via a fresh TCP connection using `_unlock()`. Do NOT send the lock command at all.
 
+## Windows Build — Step by Step
+
+Run on a Windows machine (PyInstaller cannot cross-compile from Mac):
+
+```bat
+cd BiomatrixSW
+python -m venv venv
+venv\Scripts\activate
+pip install -r requirements.txt
+
+:: Python 3.14 only — override the two incompatible versions
+pip install pyinstaller==6.20.0 Pillow==12.2.0
+
+build.bat
+```
+
+Output: `dist\BiomatrixSync.exe` — copy to target PC and run directly.
+
+> Windows Defender SmartScreen may warn on first launch ("Windows protected your PC"). Click **More info → Run anyway**. Expected for unsigned executables.
+
 ## Pending / TODO
 - [ ] Verify biometric device `user_id` matches School Insights `user_id` (mapping may be needed)
-- [ ] Add Windows Service support (NSSM) for headless background operation
-- [ ] Test on Windows machine
 - [ ] Add missed-sync recovery (re-sync previous day if machine was off)
 - [ ] Token refresh logic when access_token expires (30-day expiry)
 - [ ] Populate `code_mappings` table for Morx installation so names appear in attendance records

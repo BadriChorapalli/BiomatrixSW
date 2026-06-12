@@ -157,15 +157,30 @@ Returns `users[]` with `user_id`, `status`, `check_in`, `check_out`.
 **Mac (run on Mac):**
 ```bash
 ./build.sh
+# REQUIRED after every Mac build — restores LAN/network entitlements
 codesign --sign - --force --deep --entitlements entitlements.plist dist/BiomatrixSync.app
 open dist/BiomatrixSync.app
 ```
 
-**Windows (run on Windows PC directly — cannot cross-compile):**
+**Windows (must run on a Windows machine — PyInstaller cannot cross-compile):**
+
 ```bat
+# Activate venv first if using one
+venv\Scripts\activate
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Python 3.14 only: override the two incompatible packages
+pip install pyinstaller==6.20.0 Pillow==12.2.0
+
+# Build
 build.bat
 ```
-Output: `dist\BiomatrixSync.exe` — self-contained, no Python needed on target machine.
+
+Output: `dist\BiomatrixSync.exe` — self-contained, no Python needed on the target machine.
+
+> `pystray._win32` warnings on Mac builds ("Hidden import not found") are harmless — the module is Windows-only and intentionally absent on Mac.
 
 Git: commit only `app/**/*.py`, `main.py`, `build.spec`, `build.sh`, `build.bat`, `requirements.txt`, `entitlements.plist`. Never commit `dist/`, `build/`, `__pycache__/`, `*.db`, `exports/`.
 

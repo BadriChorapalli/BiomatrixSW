@@ -159,22 +159,67 @@ Output: `dist/BiomatrixSync.app`
 
 ### Windows
 
-Run on the Windows machine directly (PyInstaller cannot cross-compile):
+> **Build must run on a Windows machine.** PyInstaller cannot cross-compile from Mac.
 
-```bat
-build.bat
-```
+#### Prerequisites
 
-Output: `dist\BiomatrixSync.exe`
+- Python 3.10–3.12 recommended. Python 3.14 works but requires package version overrides (see below).
+- Git for cloning or pulling the repo.
+- The Windows machine must be on the same LAN as a biometric device for testing.
 
-> **Note:** The same `build.spec` file is used for both platforms. PyInstaller detects the OS at build time.
+#### Steps
+
+1. **Clone or copy the repo** to the Windows machine.
+
+2. **Create a virtual environment (recommended):**
+   ```bat
+   cd BiomatrixSW
+   python -m venv venv
+   venv\Scripts\activate
+   ```
+
+3. **Install dependencies:**
+   ```bat
+   pip install -r requirements.txt
+   ```
+
+   > **Python 3.14 only:** `requirements.txt` pins `pyinstaller==6.6.0` and `Pillow==10.3.0`, which are incompatible with Python 3.14. After running the above, override the two conflicting packages:
+   > ```bat
+   > pip install pyinstaller==6.20.0 Pillow==12.2.0
+   > ```
+   > All other dependencies from `requirements.txt` install normally on 3.14.
+
+4. **Run the build:**
+   ```bat
+   build.bat
+   ```
+   Alternatively, run PyInstaller directly:
+   ```bat
+   pyinstaller build.spec --clean --noconfirm
+   ```
+
+5. **Output:** `dist\BiomatrixSync.exe` — fully self-contained, no Python needed on the target PC.
+
+#### Distributing the build
+
+- Copy `dist\BiomatrixSync.exe` to the target PC. No installer wizard is needed — just double-click to launch.
+- If Windows Defender shows a SmartScreen warning ("Windows protected your PC"), click **More info → Run anyway**. This is expected for unsigned executables and is not a security issue.
+- Some antivirus products may flag PyInstaller executables as suspicious. Add an exclusion for the app folder on affected machines if needed.
+
+#### Windows-specific features in the build
+
+- **System tray (`pystray`):** On Windows the app minimises to the system tray on close (instead of quitting). The `pystray._win32` hidden import in `build.spec` is required for this to work in the packaged `.exe`; the "not found" warnings printed during a Mac build are harmless (the module is platform-specific).
+- **Autostart (`winreg`):** The Settings tab includes a "Start with Windows" toggle that writes to `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`. This is Windows-only and is a no-op on Mac.
+
+> **Note:** The same `build.spec` is used for both platforms. PyInstaller detects the OS at build time — Mac builds a `.app` bundle, Windows builds a single `.exe`.
 
 ### PyInstaller Notes
 
 - `jaraco.*` packages must be listed as hidden imports in `build.spec` — pyzk depends on them but PyInstaller doesn't auto-detect them. The warnings printed at build time are harmless.
-- macOS entitlements are stripped by PyInstaller's signing step; `codesign` must be re-run manually every time.
+- `pystray._win32` and `pystray._base` are listed as hidden imports for the Windows system tray feature. On Mac these emit "not found" warnings during the build — also harmless; the module is platform-specific and is never loaded at runtime on Mac.
+- macOS entitlements are stripped by PyInstaller's signing step; `codesign` must be re-run manually every time after a Mac build.
 - The `--onedir` mode is used (not `--onefile`) for faster startup.
-- **Python 3.14:** Use pyinstaller 6.20.0 and Pillow 12.2.0. Earlier versions of both packages refuse to install against Python 3.14.
+- **Python 3.14 (Windows):** Use `pyinstaller==6.20.0` and `Pillow==12.2.0`. The versions pinned in `requirements.txt` (`pyinstaller==6.6.0`, `Pillow==10.3.0`) are Mac-compatible but refuse to install against Python 3.14.
 
 ---
 
