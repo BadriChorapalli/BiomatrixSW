@@ -64,6 +64,7 @@ if IS_WIN:
         datas=[],
         hiddenimports=[
             'win32service', 'win32serviceutil', 'win32event', 'servicemanager',
+            'win32timezone',
             'zk', 'zk.base', 'zk.const', 'zk.exception',
             'schedule', 'requests',
             'jaraco.functools', 'jaraco.context', 'jaraco.text',

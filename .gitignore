@@ -17,6 +17,11 @@ env/
 build/
 dist/
 
+# Installer package — compiled binaries and pendrive deploy folder (build artifacts)
+BiomatrixSyncPackage/dist/
+BiomatrixSyncPackage/Output/
+Deploy/
+
 # Database (local data — not for version control)
 *.db
 *.sqlite3
