@@ -30,11 +30,15 @@ You do not need to do anything manually after the initial setup.
 
 ### On Windows
 
-1. Copy `BiomatrixSync.exe` to any folder on the PC (e.g. `C:\BiomatrixSync\`).
-2. Double-click `BiomatrixSync.exe` to launch.
+1. Copy the entire folder containing `BiomatrixSync.exe`, `BiomatrixSyncService.exe`, `install_service.bat`, and `uninstall_service.bat` to the PC (e.g. `C:\BiomatrixSync\`).
+2. Double-click `BiomatrixSync.exe` to launch the GUI app.
 3. That's it — no Python, no installation wizard needed.
 
 > If Windows Defender shows a warning, click **More info → Run anyway**. The app is safe; it just isn't signed with a paid certificate.
+
+**Optional: Run as a Windows Service (recommended for school PCs)**
+
+Installing as a Windows Service means the app runs in the background automatically at boot — even before anyone logs in. See [Running as a Windows Service](#running-as-a-windows-service-windows-only) below.
 
 ### On Mac
 
@@ -111,6 +115,44 @@ The app will now run automatically. You can minimise the window — it keeps wor
 
 ---
 
+## Running as a Windows Service (Windows only)
+
+By default the app runs as a normal desktop program — it must be open (or minimised to the tray) to work. Installing it as a **Windows Service** removes that requirement: the background sync starts at boot and keeps running even when no user is logged in.
+
+### Files needed
+
+| File | Purpose |
+|---|---|
+| `BiomatrixSyncService.exe` | Headless service (no window) |
+| `install_service.bat` | Installs and starts the service |
+| `uninstall_service.bat` | Stops and removes the service |
+
+### Install
+
+1. Right-click `install_service.bat` → **Run as administrator**.
+2. The script installs the service, sets it to start automatically at boot, and starts it immediately.
+3. You can confirm it is running with:
+   ```
+   sc query BiomatrixSync
+   ```
+
+### Uninstall
+
+Right-click `uninstall_service.bat` → **Run as administrator**.
+
+### Service logs
+
+When running as a service, all activity is logged to:
+```
+C:\ProgramData\BiomatrixSync\service.log
+```
+
+### Using the GUI alongside the service
+
+You can still open `BiomatrixSync.exe` at any time to view the dashboard, history, and logs — it reads from the same database. The GUI and the service do not conflict.
+
+---
+
 ## Day-to-day Use
 
 You generally don't need to do anything. Just make sure the app is open on the PC.
@@ -130,6 +172,8 @@ You generally don't need to do anything. Just make sure the app is open on the P
 | App not pulling automatically | Make sure Auto Pull is enabled in Settings. Check the Logs tab for errors. |
 | Registration tab shows a form after already being approved | This shouldn't happen — the form hides automatically on approval. If it does, check your internet connection and click "Check Status". |
 | Forgot password | Delete the file `biomatrix.db` from the app data folder and restart. This resets everything (you'll need to redo setup). |
+| Windows Service won't start | Run `install_service.bat` as Administrator. Check `C:\ProgramData\BiomatrixSync\service.log` for error details. |
+| Service installed but attendance not syncing | Open `BiomatrixSync.exe` and check the Logs tab. Make sure devices are configured and the device is approved in School Insights. |
 | Names showing blank in attendance records (Morx devices) | Morx hardware does not store staff names. Names come from the staff mapping in School Insights. Go to the **Staff** tab → **Sync from School Insights**, then assign biometric codes to each staff member. |
 
 ---
@@ -139,9 +183,11 @@ You generally don't need to do anything. Just make sure the app is open on the P
 The app stores its database and exported CSVs here:
 
 - **Mac:** `~/Library/Application Support/BiomatrixSync/`
-- **Windows:** `C:\Users\<YourName>\AppData\Roaming\BiomatrixSync\`
+- **Windows:** `C:\ProgramData\BiomatrixSync\`
 
 CSV exports are in the `exports/` subfolder — one file per device per date.
+
+> **Upgrading from an older version on Windows?** The database was previously stored in `C:\Users\<YourName>\AppData\Roaming\BiomatrixSync\`. On first launch after updating, the app automatically copies your existing data to the new location — no manual steps needed.
 
 ---
 

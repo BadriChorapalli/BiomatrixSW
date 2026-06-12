@@ -1,0 +1,293 @@
+========================================================
+  BIOMATRIX SYNC — INSTALLATION & SETUP GUIDE
+  BellWeather School Insights
+========================================================
+
+HOW IT WORKS (READ THIS FIRST)
+-------------------------------
+
+After setup is complete, BiomatrixSync runs silently in the
+background WITHOUT you needing to open any app.
+
+  - It connects to the biometric device on your network
+  - Pulls attendance punches automatically every few minutes
+  - Posts attendance to School Insights automatically
+
+You do NOT need to open or keep the app open for this to work.
+The PC just needs to be switched on and connected to the network.
+
+
+WHAT EACH FILE DOES
+-------------------
+
+  BiomatrixSync.exe
+      The main app with a window. Use this ONLY during initial
+      setup and when you need to make changes later.
+      You do not need to open this for day-to-day operation.
+
+  BiomatrixSyncService.exe
+      The silent background program (no window, no icon).
+      This is what actually pulls attendance and posts to
+      School Insights — completely automatically, even before
+      anyone logs into the PC.
+      Do NOT double-click this file. It is installed using
+      install_service.bat (see Step 8).
+
+  install_service.bat
+      Right-click → Run as administrator.
+      When you run this file it does 3 things automatically:
+        1. Registers BiomatrixSyncService.exe with Windows
+        2. Sets it to start automatically every time the PC boots
+        3. Starts it immediately in the background
+      Run this AFTER completing the full setup (Steps 1–7).
+
+  uninstall_service.bat
+      Right-click → Run as administrator.
+      Stops and removes the background service.
+
+  SETUP_GUIDE.txt
+      This file.
+
+
+========================================================
+STEP 1 — COPY FILES TO THE PC
+========================================================
+
+1.  Copy the folder "BiomatrixSync_v1.0" from the pen drive
+    to this location on the PC:
+
+        C:\BiomatrixSync\
+
+    You should have:
+        C:\BiomatrixSync\BiomatrixSync.exe
+        C:\BiomatrixSync\BiomatrixSyncService.exe
+        C:\BiomatrixSync\install_service.bat
+        C:\BiomatrixSync\uninstall_service.bat
+        C:\BiomatrixSync\SETUP_GUIDE.txt
+
+
+========================================================
+STEP 2 — OPEN THE APP FOR FIRST-TIME SETUP
+========================================================
+
+2.  Go to  C:\BiomatrixSync\  and double-click:
+
+        BiomatrixSync.exe
+
+3.  If Windows shows a blue warning ("Windows protected your PC"):
+      → Click "More info"
+      → Click "Run anyway"
+
+4.  Log in with the default credentials:
+      Username:  admin
+      Password:  admin123
+
+5.  Go to the Settings tab → Change Password.
+    Set a new password and save it.
+
+
+========================================================
+STEP 3 — ADD THE BIOMETRIC DEVICE
+========================================================
+
+6.  Click the Devices tab → click "+ Add New Device".
+
+7.  Fill in:
+      Device Name  →  e.g.  Main Gate
+      IP Address   →  the IP of the biometric machine
+                       e.g. 192.168.100.9
+      Brand        →  select your brand:
+                        eSSL / ZKTeco / Realtime / FingerTec
+                        / Anviz / Matrix  →  Port fills as 4370
+                        Morx BioFace      →  Port fills as 5005
+      Password     →  0   (leave as zero unless told otherwise)
+
+8.  Click "Test Connection" — wait for "Connection successful".
+    If it fails, check the IP and make sure the PC and device
+    are on the same network.
+
+9.  Click "Save Device".
+
+
+========================================================
+STEP 4 — REGISTER WITH SCHOOL INSIGHTS
+========================================================
+
+10. Click the Registration tab → click "Load".
+
+11. Select your Organisation, then your School.
+
+12. Enter:
+      Device Name  →  e.g.  Main Gate Biometric
+      Location     →  e.g.  School Front Gate
+
+13. Click "Submit Registration Request".
+
+14. Ask your School Insights administrator to APPROVE this
+    device from the School Insights admin panel.
+
+15. Keep the app open. It checks every 10 seconds.
+    When approved the status banner turns GREEN (APPROVED).
+
+
+========================================================
+STEP 5 — MAP STAFF TO BIOMETRIC CODES
+========================================================
+
+16. Click the Staff tab → click "Sync from School Insights".
+
+17. For each staff member, enter their biometric enrollment
+    number (the ID assigned to them on the device) and click
+    "Assign".
+
+    Not sure what ID to use?
+    → History tab → "Pull from Device" for today
+    → Check the User ID column in the records shown
+    → Match those numbers to your staff members
+
+
+========================================================
+STEP 6 — CONFIGURE AUTO PULL
+========================================================
+
+18. Click the Settings tab → turn ON "Auto Pull".
+
+19. Set pull intervals. Example:
+      07:00 – 08:00  →  every 2 minutes
+      08:00 – 08:25  →  every 1 minute
+      08:25 – 08:35  →  every 30 seconds
+
+20. Click Save.
+
+
+========================================================
+STEP 7 — CONFIRM EVERYTHING IS WORKING
+========================================================
+
+21. Stay on the Logs tab and watch for a few minutes.
+    You should see messages like:
+      → Pulled X new records from Main Gate
+      ✓ Marked  [Staff Name]  IN 08:05  OUT --
+
+    This confirms pull from device and post to School Insights
+    are both working correctly.
+
+22. Once confirmed, close the app:
+    Right-click the tray icon (bottom-right near the clock)
+    → Quit.
+
+    From this point, you do NOT need to open the app again.
+
+
+========================================================
+STEP 8 — INSTALL THE BACKGROUND SERVICE
+========================================================
+
+This makes BiomatrixSyncService.exe start automatically at
+every boot and run silently — no app window needed, no one
+needs to be logged in.
+
+23. Right-click  install_service.bat  → Run as administrator.
+
+    What happens:
+      - Registers BiomatrixSyncService.exe with Windows
+      - Sets it to start automatically on every boot
+      - Starts it immediately in the background
+      - A black command window opens, runs, and closes
+        on its own (this is normal)
+
+24. Once the window closes, the service is running.
+
+25. To confirm it is running, open Command Prompt and type:
+      sc query BiomatrixSync
+
+    Look for:  STATE : 4  RUNNING
+
+    That's it. Setup is complete.
+
+    From now on:
+      - The service starts automatically when the PC boots
+      - It pulls attendance from the device silently
+      - It posts attendance to School Insights silently
+      - No app window. No login needed. No manual action needed.
+
+    Service activity is logged to:
+      C:\ProgramData\BiomatrixSync\service.log
+
+
+========================================================
+AFTER SETUP — WHAT YOU NEED TO DO DAILY
+========================================================
+
+  NOTHING.
+
+  The service handles everything automatically.
+  Just make sure the PC is switched on and connected
+  to the same network as the biometric device.
+
+
+========================================================
+WHEN TO OPEN BiomatrixSync.exe AGAIN
+========================================================
+
+Only open the app if you need to make a change:
+
+  - Adding a new biometric device
+  - Adding or reassigning a staff member's biometric code
+  - Changing the pull interval
+  - Checking attendance history or logs
+  - Changing the app password
+
+For everything else, the service runs silently in the background.
+
+
+========================================================
+TROUBLESHOOTING
+========================================================
+
+Attendance not appearing in School Insights
+  → Open BiomatrixSync.exe → check the Logs tab for errors.
+  → Check the service log:  C:\ProgramData\BiomatrixSync\service.log
+
+"Failed to connect" when testing the device
+  → Check the IP address of the biometric machine.
+  → Make sure the PC and device are on the same network.
+  → For Morx devices, confirm port is 5005.
+
+Staff showing Absent even after punching
+  → Staff tab — confirm the staff member has a biometric
+     code assigned.
+  → Logs tab — check for "failed" messages.
+
+Service not running after reboot
+  → Right-click install_service.bat → Run as administrator.
+  → Check:  sc query BiomatrixSync  in Command Prompt.
+
+Forgot the app password
+  → Delete  biomatrix.db  from  C:\ProgramData\BiomatrixSync\
+  → Restart BiomatrixSync.exe — resets to  admin / admin123
+  → You will need to redo device setup and staff mapping.
+
+Names showing blank (Morx devices only)
+  → Staff tab → Sync from School Insights →
+     assign biometric codes to each staff member.
+
+
+========================================================
+WHERE DATA IS STORED
+========================================================
+
+  Database and exports:  C:\ProgramData\BiomatrixSync\
+  CSV files (per device per day):
+                         C:\ProgramData\BiomatrixSync\exports\
+  Service log:           C:\ProgramData\BiomatrixSync\service.log
+
+
+========================================================
+SUPPORT
+========================================================
+
+For help, contact your School Insights administrator
+or the BellWeather support team.
+
+========================================================

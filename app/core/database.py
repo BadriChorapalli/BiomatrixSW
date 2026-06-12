@@ -5,13 +5,35 @@ import sys
 
 def _get_data_dir():
     if sys.platform == "win32":
-        base = os.environ.get("APPDATA", os.path.expanduser("~"))
+        # PROGRAMDATA is accessible to both the GUI app and Windows Service (SYSTEM account)
+        base = os.environ.get("PROGRAMDATA", r"C:\ProgramData")
+    elif sys.platform == "darwin":
+        base = os.path.expanduser("~/Library/Application Support")
     else:
-        base = os.path.expanduser("~/Library/Application Support") if sys.platform == "darwin" \
-               else os.path.expanduser("~/.local/share")
+        base = os.path.expanduser("~/.local/share")
     data_dir = os.path.join(base, "BiomatrixSync")
     os.makedirs(data_dir, exist_ok=True)
     return data_dir
+
+
+def _migrate_appdata_if_needed():
+    """One-time migration: copy DB + exports from old APPDATA location to PROGRAMDATA."""
+    if sys.platform != "win32":
+        return
+    old_base = os.environ.get("APPDATA", "")
+    if not old_base:
+        return
+    old_db = os.path.join(old_base, "BiomatrixSync", "biomatrix.db")
+    if not os.path.exists(old_db) or os.path.exists(DB_PATH):
+        return
+    import shutil
+    try:
+        shutil.copy2(old_db, DB_PATH)
+        old_exports = os.path.join(old_base, "BiomatrixSync", "exports")
+        if os.path.exists(old_exports):
+            shutil.copytree(old_exports, EXPORT_DIR, dirs_exist_ok=True)
+    except Exception:
+        pass
 
 
 DATA_DIR = _get_data_dir()
@@ -24,6 +46,7 @@ def get_conn():
 
 
 def init_db():
+    _migrate_appdata_if_needed()
     conn = get_conn()
     c = conn.cursor()
     c.executescript("""
