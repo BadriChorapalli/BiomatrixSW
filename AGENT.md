@@ -25,7 +25,9 @@ Devices placed at exit gates report all punches as `CHECK OUT` (status=1) regard
 `_derive_daily_records()` must run locally first, then a **single** `POST /staff-attendance/mark/` call is made with both `check_in` and `check_out` together. The backend has `explicit_clear_checkout` logic: sending `check_out: null` explicitly clears a stale check-out; omitting `check_out` preserves the existing value.
 
 ### 3. `marked_today` is the gatekeeper for backend calls
-After each auto-pull, the scheduler compares `sorted(code_mappings.keys())` vs `sorted(get_marked_today(today))`. If equal → skip entirely. Only missing bio_codes trigger `mark_attendance()`. A successful mark immediately inserts into `marked_today`. Never bypass this.
+After each auto-pull, the scheduler compares `sorted(code_mappings.keys())` vs `sorted(get_marked_today(today))`. If equal → skip the primary marking pass entirely. Only missing bio_codes trigger `mark_attendance()`. A successful mark immediately inserts into `marked_today`. Never bypass this.
+
+`run_fallback_sync()` also respects `marked_today` — it filters out already-marked codes before building its payload, so it will not re-send a code that was already successfully marked.
 
 ### 4. Database migrations must be backward-compatible
 New columns are added via `ALTER TABLE ... ADD COLUMN` inside a `try/except` block in `init_db()` after the main `executescript`. This handles existing installs silently. Never `DROP` or `RENAME` a column.
@@ -67,6 +69,7 @@ scheduler.py (background threads)
        save_attendance()
        compare marked_today vs code_mappings
        for missed: _derive_daily_records() → mark_attendance() → save_marked_today()
+       run_fallback_sync(today)   ← always runs; no-op if all codes already marked
        sleep(_current_interval())   ← reads poll_slots from DB every cycle
 
 device.py (brand dispatch)
@@ -84,7 +87,7 @@ device.py (brand dispatch)
 | `database.py` | All SQLite reads/writes. `init_db()` creates tables and runs migrations. |
 | `device.py` | Brand router. `_is_morx()` dispatches to morx_device (SBXPC) or pyzk (ZK). Exposes `pull_attendance(brand)`, `get_device_users(brand)`, `test_connection(brand)`. Also owns `_enrich_names()` for Morx name lookup. |
 | `morx_device.py` | **Morx BioFace-MSD1K only.** Complete SBXPC wire protocol: connect, ReadAllUserID, ReadAllGLogData, EnableDevice. Pure Python — no DLL, no pip packages beyond stdlib. |
-| `api_client.py` | School Insights API calls. Also owns `_derive_daily_records()` and `_cluster_punches()` — the attendance derivation logic. |
+| `api_client.py` | School Insights API calls. Also owns `_derive_daily_records()`, `_cluster_punches()`, `bulk_mark_by_biocodes()`, and `run_fallback_sync()` — the attendance derivation and fallback upload logic. |
 | `sync.py` | Batch sync orchestration: pull → CSV → DB → upload. Called by scheduler daily and by manual "Sync Now". |
 | `scheduler.py` | Two background threads: daily schedule + auto-pull poll loop. Both are daemon threads. |
 
@@ -217,7 +220,7 @@ Git: commit only `app/**/*.py`, `main.py`, `windows_service.py`, `build.spec`, `
 - SBXPC packet format in `morx_device.py` — checksum must cover all bytes including magic header `55 aa`
 
 **Never do:**
-- Call `mark_attendance()` more than once per user per poll cycle
+- Call `mark_attendance()` more than once per user per poll cycle — `run_fallback_sync()` uses a different endpoint (`bulk_mark_by_biocodes`) and is the correct retry path, not a second `mark_attendance()` call
 - Use `r.status` from pyzk to determine check-in vs check-out direction
 - Update UI widgets directly from a background thread
 - Drop or rename existing database columns

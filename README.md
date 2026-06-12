@@ -164,11 +164,13 @@ You can still open `BiomatrixSync.exe` at any time to view the dashboard, histor
 
 ## Day-to-day Use
 
-You generally don't need to do anything. Just make sure the app is open on the PC.
+You generally don't need to do anything. Just make sure the app is open on the PC (or the Windows Service is running).
 
 - **Dashboard** — shows how many records were pulled today, each mapped staff member's status (Present/Absent), check-in and check-out time, and when the last auto-pull happened.
-- **History** — browse attendance records by date, export to CSV.
+- **History** — browse attendance records by date, export to CSV. The **Fallback Sync** button manually re-sends any unmarked records for the selected date via bio-code upload.
 - **Logs** — see exactly what the app is doing, with timestamps.
+
+> **Automatic fallback sync:** After every poll cycle the app automatically re-sends any still-unmarked bio-codes to School Insights via a separate bulk upload endpoint. This acts as a silent double-check — if a normal marking call failed or was missed, the fallback catches it at the next poll without any manual action.
 
 ---
 
@@ -177,7 +179,7 @@ You generally don't need to do anything. Just make sure the app is open on the P
 | Problem | Fix |
 |---|---|
 | "Failed to connect" on device test | Check the IP address and make sure the PC and device are on the same network. Try pinging the device IP. For Morx devices, confirm port is `5005`. |
-| Staff showing as Absent even after punching | Check if the staff member is mapped (Staff tab). Also check Logs for any "failed" mark messages. |
+| Staff showing as Absent even after punching | Check if the staff member is mapped (Staff tab). The app retries automatically via fallback sync every poll cycle — check Logs for `[Fallback]` lines to see if it succeeded. |
 | App not pulling automatically | Make sure Auto Pull is enabled in Settings. Check the Logs tab for errors. |
 | Registration tab shows a form after already being approved | This shouldn't happen — the form hides automatically on approval. If it does, check your internet connection and click "Check Status". |
 | Forgot password | Delete the file `biomatrix.db` from the app data folder and restart. This resets everything (you'll need to redo setup). |

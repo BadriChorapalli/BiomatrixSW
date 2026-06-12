@@ -335,14 +335,23 @@ _run_poll()
   ↓ pull_attendance(since=last_pull, force_udp=..., brand=...)   ← routes to eSSL or Morx
   ↓ save_attendance()                  ← INSERT OR IGNORE
   ↓ get_marked_today(today)            ← who's already sent to SI today
-  ↓ if sorted(mapped) == sorted(marked) → skip
+  ↓ if sorted(mapped) == sorted(marked) → skip normal marking pass
   ↓ for each missed bio_code:
       get_attendance_by_date()         ← ALL today's punches for that user
       _derive_daily_records()          ← edge-case derivation
       mark_attendance()                ← single POST to SI
       save_marked_today()              ← persist success
+  ↓ run_fallback_sync(today)           ← always runs after marking pass
+      _derive_daily_records(today)     ← re-derive all
+      filter already in marked_today   ← no-op if everyone marked
+      bulk_mark_by_biocodes()          ← POST /biometric/upload/direct/
+      save_marked_today() for each     ← server-resolved bio_codes persisted
   ↓ sleep(_current_interval())         ← reads poll_slots from DB every cycle
 ```
+
+**Why two marking steps?**
+- `mark_attendance()` sends one request per user with full check-in/check-out and is the primary path.
+- `run_fallback_sync()` is the automatic double-check: it batches all still-unmarked bio_codes in a single POST and lets the server resolve them. It catches any codes that failed or slipped through the primary path without needing manual intervention.
 
 **Key design decisions:**
 - `since=last_pull` — for eSSL, filters new records since last cycle. For Morx, full log is always returned; `since` filtering happens client-side in `morx_device.py`.
@@ -352,6 +361,14 @@ _run_poll()
 ### `mark_attendance()` — `api_client.py`
 
 Single `POST /staff-attendance/mark/` call with both `check_in` and `check_out`. Sending `check_out: null` explicitly tells the backend to clear any stale check-out from a previous call (the backend has `explicit_clear_checkout` logic for this).
+
+### `run_fallback_sync(date_str, log_callback)` — `api_client.py`
+
+Automatic double-check called at the end of every poll cycle. Fetches all attendance records for `date_str` from the local DB, derives daily check-in/check-out via `_derive_daily_records()`, filters out codes already in `marked_today`, then sends the remaining bio_codes in a single `POST /biometric/upload/direct/` via `bulk_mark_by_biocodes()`. On success, saves each sent code to `marked_today`.
+
+**Returns early with no API call** if there are no records or all codes are already marked — so it is a no-op in the happy path and safe to call unconditionally every cycle.
+
+Also called by the **Fallback Sync** button in the History tab for manual use on a selected date.
 
 ### Multi-device support
 
