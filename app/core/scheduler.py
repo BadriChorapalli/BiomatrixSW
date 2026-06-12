@@ -527,9 +527,23 @@ def _run_poll(interval_minutes, log_callback):
                         f"No punch : {len(no_punch)}")
 
                     if no_map:
+                        def _sort_codes(codes):
+                            try:
+                                return ', '.join(str(c) for c in sorted(codes, key=lambda x: int(x)))
+                            except (ValueError, TypeError):
+                                return ', '.join(sorted(codes))
+                        preview = _sort_codes(list(no_map)[:8])
                         log(f"⚠ {len(no_map)} device user(s) have no bio-code mapping — "
-                            f"codes: {', '.join(sorted(no_map)[:8])}"
+                            f"codes: {preview}"
                             + (" ..." if len(no_map) > 8 else ""))
+                        if no_punch:
+                            no_punch_codes = ', '.join(
+                                f"{c}({code_mappings[c]['si_name'].split()[0]})"
+                                for c in sorted(no_punch)
+                                if c in code_mappings
+                            )
+                            log(f"   ↳ Bio-code mismatch? Unmatched staff codes: {no_punch_codes}"
+                                f" — check these against the {len(no_map)} unmapped device codes above")
 
                     # Staff not marked at all today
                     missed = mapped_codes - marked_codes
@@ -565,7 +579,7 @@ def _run_poll(interval_minutes, log_callback):
                                 if str(r["user_id"]) == bio_code
                             ]
                             if not user_records:
-                                log(f"   – {mapping['si_name']:<28}  No punch on device today")
+                                log(f"   – {mapping['si_name']:<28}  [code: {bio_code}]  No punch on device today")
                                 no_punch_count += 1
                                 continue
 
