@@ -4,4 +4,5 @@ requests==2.31.0
 schedule==1.2.1
 Pillow==10.3.0
 pystray==0.19.5
+pywin32==310
 pyinstaller==6.6.0
