@@ -273,18 +273,28 @@ def post_verify_result(command_id, result):
         return False, str(e)
 
 
-def listen_command_stream(command_queue, stop_event, log_callback=None):
+def listen_command_stream(command_queue, stop_event, log_callback=None, on_connected=None):
     """Listen to GET /biometric/device/stream/ and enqueue command events.
 
     The scheduler drains command_queue and executes commands serially. If SSE
     disconnects, this function reconnects with bounded backoff; the scheduler's
-    polling fallback continues to work independently.
+    polling fallback activates automatically while SSE is down.
+
+    on_connected(bool) is called with True when the stream opens and False when
+    it closes/errors, so the scheduler can suppress redundant HTTP polling.
     """
     backoff = 10
 
     def log(msg):
         if log_callback:
             log_callback(msg)
+
+    def set_connected(state):
+        if on_connected:
+            try:
+                on_connected(state)
+            except Exception:
+                pass
 
     while not stop_event.is_set():
         if not is_device_approved():
@@ -300,6 +310,7 @@ def listen_command_stream(command_queue, stop_event, log_callback=None):
             ) as response:
                 response.raise_for_status()
                 backoff = 10
+                set_connected(True)
                 log("[SSE] Connected to command stream")
 
                 event_name = None
@@ -334,11 +345,13 @@ def listen_command_stream(command_queue, stop_event, log_callback=None):
                     elif line.startswith("data:"):
                         data_lines.append(line[5:].strip())
         except Exception:
+            set_connected(False)
             if stop_event.is_set():
                 break
             log(f"[SSE] Disconnected — reconnecting in {backoff}s")
             stop_event.wait(backoff)
             backoff = min(60, 30 if backoff == 10 else backoff * 2)
+    set_connected(False)
 
 
 # ── Staff Data ───────────────────────────────────────────────────────────────

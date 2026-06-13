@@ -59,6 +59,7 @@ _poll_running = False
 _command_queue = queue.Queue()
 _sse_thread = None
 _sse_stop_event = None
+_sse_connected = False   # True while SSE stream is live; polling skips when this is set
 # De-dup ledger so a command delivered by both SSE and the polling fallback runs
 # once. Bounded so a process that stays up for weeks does not leak memory — old
 # ids are safe to forget because the server never re-delivers a command that has
@@ -406,6 +407,11 @@ def _poll_pending_commands(log_callback, last_pull):
         _execute_command(command, log_callback, last_pull)
 
 
+def _set_sse_connected(state: bool):
+    global _sse_connected
+    _sse_connected = state
+
+
 def _start_sse_listener(log_callback=None):
     global _sse_thread, _sse_stop_event
     if _sse_thread and _sse_thread.is_alive():
@@ -414,7 +420,7 @@ def _start_sse_listener(log_callback=None):
     _sse_stop_event = threading.Event()
     _sse_thread = threading.Thread(
         target=listen_command_stream,
-        args=(_command_queue, _sse_stop_event, log_callback),
+        args=(_command_queue, _sse_stop_event, log_callback, _set_sse_connected),
         daemon=True,
     )
     _sse_thread.start()
@@ -442,6 +448,10 @@ def _run_poll(interval_minutes, log_callback):
 
     def poll_commands_if_due(force=False):
         nonlocal last_command_poll_at
+        # Skip polling while SSE stream is live — it delivers commands in real time.
+        # Only fall back to HTTP polling when SSE is disconnected.
+        if _sse_connected and not force:
+            return
         now_monotonic = time.monotonic()
         if force or (now_monotonic - last_command_poll_at) >= 30:
             _poll_pending_commands(log_callback, last_pull)
