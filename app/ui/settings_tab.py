@@ -239,9 +239,9 @@ class SettingsTab(ctk.CTkFrame):
         ctk.CTkFrame(parent, height=1, fg_color="#333").pack(fill="x", padx=16, pady=(0, 6))
 
     def _change_password(self):
-        cur = self.cur_pass.get()
-        new = self.new_pass.get()
-        confirm = self.confirm_pass.get()
+        cur = self.cur_pass.get().strip()
+        new = self.new_pass.get().strip()
+        confirm = self.confirm_pass.get().strip()
 
         stored = db.get_setting("auth_password", _hash("admin123"))
         if _hash(cur) != stored:
