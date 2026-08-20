@@ -32,8 +32,8 @@ def _log(msg):
 
 class BiomatrixSyncService(win32serviceutil.ServiceFramework):
     _svc_name_ = "BiomatrixSync"
-    _svc_display_name_ = "Biomatrix Sync — BellWeather"
-    _svc_description_ = "Biometric attendance sync service for BellWeather School Insights"
+    _svc_display_name_ = "Biomatrix Sync — Bellwether"
+    _svc_description_ = "Biometric attendance sync service for Bellwether School Insights"
 
     def __init__(self, args):
         win32serviceutil.ServiceFramework.__init__(self, args)

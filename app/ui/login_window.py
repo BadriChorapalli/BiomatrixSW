@@ -43,7 +43,7 @@ class LoginWindow(ctk.CTk):
                      text_color="#4fc3f7").pack(pady=(28, 0))
         ctk.CTkLabel(header, text="BiomatrixSync", font=ctk.CTkFont(size=16, weight="bold"),
                      text_color="white").pack()
-        ctk.CTkLabel(header, text="by BellWeather", font=ctk.CTkFont(size=11),
+        ctk.CTkLabel(header, text="by Bellwether", font=ctk.CTkFont(size=11),
                      text_color="#555").pack()
 
         # Form

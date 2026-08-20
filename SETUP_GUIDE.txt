@@ -1,6 +1,6 @@
 ========================================================
   BIOMATRIX SYNC — INSTALLATION & SETUP GUIDE
-  BellWeather School Insights
+  Bellwether School Insights
 ========================================================
 
 HOW IT WORKS (READ THIS FIRST)
@@ -288,6 +288,6 @@ SUPPORT
 ========================================================
 
 For help, contact your School Insights administrator
-or the BellWeather support team.
+or the Bellwether support team.
 
 ========================================================

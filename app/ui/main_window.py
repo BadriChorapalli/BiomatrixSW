@@ -18,7 +18,7 @@ ctk.set_default_color_theme("blue")
 class MainWindow(ctk.CTk):
     def __init__(self, start_hidden=False):
         super().__init__()
-        self.title("Biomatrix Sync — BellWeather")
+        self.title("Biomatrix Sync — Bellwether")
         self.geometry("900x620")
         self.minsize(800, 560)
         self._tray = TrayIcon(on_show=self._show_from_tray, on_quit=self.quit_app)
@@ -44,7 +44,7 @@ class MainWindow(ctk.CTk):
         header.pack(fill="x")
         ctk.CTkLabel(header, text="  Biomatrix Sync", font=ctk.CTkFont(size=18, weight="bold"),
                      text_color="#4fc3f7").pack(side="left", padx=16, pady=10)
-        ctk.CTkLabel(header, text="BellWeather", font=ctk.CTkFont(size=12),
+        ctk.CTkLabel(header, text="Bellwether", font=ctk.CTkFont(size=12),
                      text_color="#666").pack(side="right", padx=16)
 
         # Tab view

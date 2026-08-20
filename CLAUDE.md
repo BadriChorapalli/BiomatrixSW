@@ -1,7 +1,7 @@
 # BiomatrixSync — Project Context
 
 ## What this software does
-BiomatrixSync is a cross-platform desktop application (Mac + Windows) built for **BellWeather** that:
+BiomatrixSync is a cross-platform desktop application (Mac + Windows) built for **Bellwether** that:
 1. Connects to **eSSL / ZKTeco** (ZK protocol, TCP port 4370) **or Morx BioFace-MSD1K** (SBXPC protocol, TCP port 5005) biometric attendance devices over LAN
 2. Pulls daily attendance records from the device
 3. Saves records as CSV to the `exports/` folder and into SQLite database
@@ -189,7 +189,7 @@ Authorization: Bearer <si_access_token>  (only after approval)
 - Multiple devices per installation supported
 - Selecting "Morx" in Devices tab auto-sets port to 5005; switching away auto-restores 4370
 
-## Related BellWeather repos
+## Related Bellwether repos
 - `school-insights/` — Django backend (staff_attendance app handles punch API)
 - `school-insights-staff-attedence-app/` — Android app (same device approval flow)
 - Key backend files:
