@@ -59,6 +59,7 @@ def init_db():
             enabled INTEGER DEFAULT 1,
             brand TEXT DEFAULT 'eSSL',
             force_udp INTEGER DEFAULT 0,
+            mac_address TEXT,
             created_at TEXT DEFAULT (datetime('now'))
         );
 
@@ -122,9 +123,10 @@ def init_db():
 
     # Migrate existing installations — add columns if absent
     for table, col, definition in [
-        ("devices",      "brand",     "TEXT DEFAULT 'eSSL'"),
-        ("devices",      "force_udp", "INTEGER DEFAULT 0"),
-        ("marked_today", "check_out", "TEXT"),
+        ("devices",      "brand",       "TEXT DEFAULT 'eSSL'"),
+        ("devices",      "force_udp",   "INTEGER DEFAULT 0"),
+        ("devices",      "mac_address", "TEXT"),
+        ("marked_today", "check_out",   "TEXT"),
     ]:
         try:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {definition}")
@@ -159,6 +161,21 @@ def update_device(device_id, name, ip, port, password, brand="eSSL", force_udp=0
         "UPDATE devices SET name=?, ip=?, port=?, password=?, brand=?, force_udp=? WHERE id=?",
         (name, ip, int(port), int(password), brand, int(force_udp), device_id)
     )
+    conn.commit()
+    conn.close()
+
+
+def update_device_ip(device_id, ip):
+    """Called after auto-recovering a device's new DHCP-assigned IP by MAC lookup."""
+    conn = get_conn()
+    conn.execute("UPDATE devices SET ip=? WHERE id=?", (ip, device_id))
+    conn.commit()
+    conn.close()
+
+
+def update_device_mac(device_id, mac_address):
+    conn = get_conn()
+    conn.execute("UPDATE devices SET mac_address=? WHERE id=?", (mac_address, device_id))
     conn.commit()
     conn.close()
 

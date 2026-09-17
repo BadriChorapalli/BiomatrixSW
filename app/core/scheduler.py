@@ -437,6 +437,7 @@ def _run_poll(interval_minutes, log_callback):
     from .device import pull_attendance
     from .database import save_attendance
     from .api_client import mark_attendance, is_device_approved, _derive_daily_records
+    from . import network_recovery
 
     def log(msg):
         if log_callback:
@@ -503,9 +504,27 @@ def _run_poll(interval_minutes, log_callback):
                 )
 
                 if not ok:
+                    # DHCP may have handed the device a new IP. Try MAC lookup,
+                    # then a verified port-scan of its last-known and this
+                    # machine's own subnets, before giving up — no manual
+                    # re-entry needed.
+                    new_ip = network_recovery.recover_device_ip(device)
+                    if new_ip and new_ip != device["ip"]:
+                        log(f"⚠ {device['name']} not reachable at {device['ip']} — "
+                            f"found it at {new_ip} via MAC lookup, retrying")
+                        device = dict(device, ip=new_ip)
+                        ok, result = pull_attendance(
+                            device["ip"], device["port"], device["password"], today,
+                            since=since, force_udp=bool(device.get("force_udp", 0)),
+                            brand=device.get("brand", "essl"),
+                        )
+
+                if not ok:
                     log(f"✗ Device offline  {device['name']} ({device['ip']})  —  {result}")
                     _post_heartbeat(log_callback, False, 0)
                     continue
+
+                network_recovery.learn_device_mac(device["id"], device["ip"], device.get("mac_address"))
 
                 if result:
                     save_attendance(device["id"], device["name"], result)
