@@ -32,6 +32,10 @@ _IP_RE = re.compile(r"(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})")
 _PORT_PROBE_TIMEOUT = 0.6
 _MAX_SCAN_WORKERS = 128
 
+# Without this, each arp/ping/ipconfig call below flashes its own console
+# window on Windows — refresh_arp_cache() alone can spawn up to 254 of them.
+_CREATE_NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+
 
 def _normalize_mac(mac):
     return mac.lower().replace("-", ":").strip()
@@ -39,7 +43,10 @@ def _normalize_mac(mac):
 
 def _run(args, timeout=5):
     try:
-        return subprocess.run(args, capture_output=True, text=True, timeout=timeout).stdout
+        return subprocess.run(
+            args, capture_output=True, text=True, timeout=timeout,
+            creationflags=_CREATE_NO_WINDOW,
+        ).stdout
     except Exception:
         return ""
 
@@ -90,10 +97,9 @@ def refresh_arp_cache():
     """
     def ping(ip):
         try:
-            if sys.platform == "win32":
-                subprocess.run(["ping", "-n", "1", "-w", "300", ip], capture_output=True, timeout=2)
-            else:
-                subprocess.run(["ping", "-c", "1", "-W", "300", ip], capture_output=True, timeout=2)
+            args = ["ping", "-n", "1", "-w", "300", ip] if sys.platform == "win32" \
+                else ["ping", "-c", "1", "-W", "300", ip]
+            subprocess.run(args, capture_output=True, timeout=2, creationflags=_CREATE_NO_WINDOW)
         except Exception:
             pass
 
