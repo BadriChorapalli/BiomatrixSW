@@ -203,6 +203,8 @@ def pull_attendance(ip, port, password, target_date=None, since=None, **kwargs):
         _unlock(ip, port, password)
 
         all_logs = _parse_log_stream(raw, count_raw)
+        if _looks_desynced(all_logs):
+            all_logs = _parse_log_stream_resync(raw)
 
         result = []
         for log in all_logs:
@@ -292,4 +294,70 @@ def _parse_log_stream(data: bytes, count: int) -> list:
         i += 12
         parsed += 1
 
+    return records
+
+
+def _looks_desynced(records: list) -> bool:
+    """Detect that _parse_log_stream lost byte alignment.
+
+    Its resync check only looks for the 5a a5 batch-separator marker at two
+    fixed offsets per 12-byte step. If a real separator lands elsewhere, the
+    parser silently reads the rest of the stream at the wrong offset, which
+    shows up as implausible years (long before the device existed, or far in
+    the future) in the decoded dates.
+    """
+    now_year = datetime.now().year
+    for r in records:
+        dt = r.get("datetime")
+        if not dt:
+            continue
+        try:
+            year = int(dt[:4])
+        except ValueError:
+            continue
+        if year < now_year - 5 or year > now_year + 1:
+            return True
+    return False
+
+
+def _parse_log_stream_resync(data: bytes) -> list:
+    """Fallback log parser — used only when _parse_log_stream desyncs.
+
+    Locates true batch boundaries by scanning for the 5a a5 2d 01 separator
+    anywhere in the stream (not just at the two fixed offsets the primary
+    parser checks), then parses strict 12-byte records within each boundary.
+    Slower (a full byte scan) so it's only used as a fallback, not the
+    default path.
+    """
+    BASE = datetime(2000, 1, 1)
+    n = len(data)
+    SEP = b"\x5a\xa5\x2d\x01"
+
+    sep_positions = []
+    idx = 0
+    while True:
+        p = data.find(SEP, idx)
+        if p == -1:
+            break
+        sep_positions.append(p)
+        idx = p + 4
+
+    start = 14 if (n >= 14 and data[:2] == b"\xa5\x5a") else 0
+    boundaries = [start] + sep_positions + [n]
+
+    records = []
+    for k in range(len(boundaries) - 1):
+        lo = boundaries[k] + (4 if k > 0 else 0)
+        hi = boundaries[k + 1]
+        i = lo
+        while i + 12 <= hi:
+            ts_sec  = struct.unpack_from("<I", data, i)[0]
+            user_id = struct.unpack_from("<I", data, i + 4)[0]
+            verify  = data[i + 8]
+            try:
+                dt_str = (BASE + timedelta(seconds=ts_sec)).strftime("%Y-%m-%d %H:%M:%S")
+            except (OverflowError, OSError):
+                dt_str = ""
+            records.append({"enroll_no": user_id, "verify_mode": verify, "datetime": dt_str})
+            i += 12
     return records
